@@ -1,0 +1,14 @@
+#game-over-screen {
+    position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+    background: rgba(0,0,0,0.85);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    z-index: 1000;
+}
+#game-over-title { font-size: 80px; margin: 0; text-transform: uppercase; text-shadow: 4px 4px 0px #000; }
+#game-over-desc { font-size: 28px; }
+#game-over-screen button { 
+    padding: 15px 30px; font-size: 20px; font-weight: bold; margin-top: 30px; 
+    cursor: pointer; background: white; color: black; border: none; border-radius: 8px;
+    transition: transform 0.2s;
+}
+#game-over-screen button:hover { transform: scale(1.1); }
