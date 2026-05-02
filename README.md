@@ -56,7 +56,6 @@ In Colony Clash, players control ant colonies on a shared map. Each colony start
 
 - **Backend**: Node.js with Express and Socket.IO for real-time multiplayer.
 - **Frontend**: HTML5 Canvas for rendering the game world.
-- **Optimization**: Python scripts (`opt_client.py`, `opt_grid.py`) for grid and client-side optimizations.
 
 ## Contributing
 
