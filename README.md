@@ -59,7 +59,7 @@ In Colony Clash, players control ant colonies on a shared map. Each colony start
 
 ## Contributing
 
-Contributions are welcome! Please fork the repository and submit a pull request.
+Contributions are welcome! Please fork the repository and submit a pull requests.
 
 ## License
 
