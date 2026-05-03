@@ -9,7 +9,7 @@ const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-const state = { players: {}, colonies: {}, ants: {}, queens: {}, beetles: {}, foods: {}, meats: {}, broods: {} };
+const state = { players: {}, colonies: {}, ants: {}, queens: {}, beetles: {}, foods: {}, meats: {}, broods: {}, aphids: {} };
 
 let idCounter = 1;
 const getId = () => (idCounter++).toString();
@@ -20,6 +20,8 @@ const MAX_ANTS_PER_COLONY = 800; // Hard cap so we don't accidentally lag out th
 let hasGameStarted = false;
 let simTick = 0;
 
+const MAX_APHIDS = 60;
+
 const COLORS = ['#3498db', '#9b59b6', '#e67e22', '#1abc9c', '#f1c40f', '#e84393'];
 
 const dist = (x1, y1, x2, y2) => { const dx = x1 - x2; const dy = y1 - y2; return Math.sqrt(dx * dx + dy * dy); };
@@ -27,14 +29,13 @@ const clamp = (val, min, max) => Math.max(min, Math.min(max, val));
 
 // Spatial Hash Grid
 
-
 const CELL_SIZE = 400;
 const GRID_W = Math.ceil(MAP_SIZE / CELL_SIZE) + 1;
 
 // Pre-allocate grid to completely eliminate GC for cell creation/destruction
 const grid = new Array(GRID_W * GRID_W);
 for (let i = 0; i < grid.length; i++) {
-    grid[i] = { ants: [], foods: [], meats: [], broods: [], beetles: [], queens: [] };
+    grid[i] = { ants: [], foods: [], meats: [], broods: [], beetles: [], queens: [], aphids: [] };
 }
 
 function getCellIndex(x, y) {
@@ -67,6 +68,7 @@ function buildGrid() {
         cell.broods.length = 0;
         cell.beetles.length = 0;
         cell.queens.length = 0;
+        cell.aphids.length = 0;
     }
     
     const addToGrid = (obj, type) => {
@@ -79,6 +81,7 @@ function buildGrid() {
     for (let id in state.broods)  addToGrid(state.broods[id], 'broods');
     for (let id in state.beetles) addToGrid(state.beetles[id], 'beetles');
     for (let id in state.queens)  addToGrid(state.queens[id], 'queens');
+    for (let id in state.aphids)  addToGrid(state.aphids[id], 'aphids');
 }
 
 // How far from a player we consider entities "active" for full AI updates
@@ -249,10 +252,12 @@ function triggerAlarm(colonyId, x, y, offenderId, radius) {
 // Slim representations — reduces network payload significantly
 const slimAnt    = a => ({ id: a.id, colonyId: a.colonyId, type: a.type, x: Math.round(a.x), y: Math.round(a.y), angle: Math.round(a.angle * 100)/100, hp: a.hp, maxHp: a.maxHp, carrying: a.carrying, isPlayer: a.isPlayer, attackCooldown: a.attackCooldown });
 const slimBeetle = b => ({ id: b.id, x: Math.round(b.x), y: Math.round(b.y), angle: Math.round(b.angle * 100)/100, hp: b.hp, attackCooldown: b.attackCooldown });
-const slimFood   = f => ({ id: f.id, x: Math.round(f.x), y: Math.round(f.y) });
+const slimFood   = f => ({ id: f.id, x: Math.round(f.x), y: Math.round(f.y), foodType: f.foodType || 'normal' });
 const slimMeat   = m => ({ id: m.id, x: Math.round(m.x), y: Math.round(m.y) });
 const slimBrood  = b => ({ id: b.id, colonyId: b.colonyId, type: b.type, x: Math.round(b.x), y: Math.round(b.y), age: Math.round(b.age) });
-const slimQueen  = q => ({ id: q.id, colonyId: q.colonyId, x: Math.round(q.x), y: Math.round(q.y), angle: Math.round(q.angle * 100)/100, hp: q.hp, food: q.food, meat: q.meat });
+const slimQueen  = q => ({ id: q.id, colonyId: q.colonyId, x: Math.round(q.x), y: Math.round(q.y), angle: Math.round(q.angle * 100)/100, hp: q.hp, food: q.food, meat: q.meat, honeyFed: q.honeyFed || 0 });
+
+const slimAphid   = a => ({ id: a.id, x: Math.round(a.x), y: Math.round(a.y) });
 
 function spawnFood() {
     // FIX: Single-pass diff fill, no tight while loop
@@ -272,6 +277,46 @@ function spawnBeetle() {
             hp: 50, tx: Math.random() * MAP_SIZE, ty: Math.random() * MAP_SIZE,
             angle: 0, aggroTarget: null, aggroTimer: 0, attackCooldown: 0
         };
+    }
+}
+
+function spawnAphid() {
+    const current = Object.keys(state.aphids).length;
+    if (current >= MAX_APHIDS) return;
+    // Spawn aphid colonies with 10 aphids per colony
+    const coloniesNeeded = Math.ceil((MAX_APHIDS - current) / 10);
+    if (coloniesNeeded <= 0) return;
+    // Create aphid colonies: pick a center and spawn 10 aphids around it
+    for (let c = 0; c < coloniesNeeded; c++) {
+        if (Object.keys(state.aphids).length >= MAX_APHIDS) break;
+        const centerX = clamp(Math.random() * MAP_SIZE, 50, MAP_SIZE - 50);
+        const centerY = clamp(Math.random() * MAP_SIZE, 50, MAP_SIZE - 50);
+        // One aphid at center
+        for (let a = 0; a < 1; a++) {
+            const id = getId();
+            state.aphids[id] = {
+                id, x: centerX, y: centerY,
+                honeyTimer: 0, lastFedTick: 0,
+                reproduceTimer: Math.floor((30 + Math.random() * 30) * FPS),
+                colonyId: centerX + '_' + centerY  // Mark colony membership
+            };
+        }
+        // 9 aphids around it at varying distances
+        for (let a = 1; a < 10; a++) {
+            if (Object.keys(state.aphids).length >= MAX_APHIDS) break;
+            const angle = (a / 9) * Math.PI * 2;
+            const distance = 30 + Math.random() * 40;  // 30-70 units away
+            const id = getId();
+            state.aphids[id] = {
+                id,
+                x: clamp(centerX + Math.cos(angle) * distance, 0, MAP_SIZE),
+                y: clamp(centerY + Math.sin(angle) * distance, 0, MAP_SIZE),
+                honeyTimer: 0,
+                lastFedTick: 0,
+                reproduceTimer: Math.floor((30 + Math.random() * 30) * FPS),
+                colonyId: centerX + '_' + centerY
+            };
+        }
     }
 }
 
@@ -344,6 +389,41 @@ io.on('connection', socket => {
     updateGameInfo();
 
     socket.on('input', data => { if (state.players[socket.id]) state.players[socket.id].inputs = data; });
+    socket.on('double_click', data => {
+        const p = state.players[socket.id];
+        if (!p) return;
+        const ant = state.ants[p.antId];
+        if (!ant) return;
+        if (!ant.carrying) return;
+        // Drop in front of ant, not at cursor
+        const dropDist = 30;
+        const x = ant.x + Math.cos(ant.angle) * dropDist;
+        const y = ant.y + Math.sin(ant.angle) * dropDist;
+
+        if (ant.carrying === 'food' || ant.carrying === 'honey') {
+            const id = getId();
+            state.foods[id] = { id, x: clamp(x, 0, MAP_SIZE), y: clamp(y, 0, MAP_SIZE), foodType: ant.carrying === 'honey' ? 'honey' : 'normal' };
+        } else if (ant.carrying === 'meat') {
+            const id = getId();
+            state.meats[id] = { id, x: clamp(x, 0, MAP_SIZE), y: clamp(y, 0, MAP_SIZE) };
+        } else if (ant.carrying === 'aphid') {
+            // Re-place the carried aphid where dropped (in front of ant)
+            if (ant.carriedAphid) {
+                const aid = ant.carriedAphid.id;
+                state.aphids[aid] = ant.carriedAphid;
+                state.aphids[aid].x = clamp(x, 0, MAP_SIZE);
+                state.aphids[aid].y = clamp(y, 0, MAP_SIZE);
+                state.aphids[aid].honeyTimer = state.aphids[aid].honeyTimer || 0;
+                state.aphids[aid].lastFedTick = state.aphids[aid].lastFedTick || simTick;
+                state.aphids[aid].reproduceTimer = state.aphids[aid].reproduceTimer || Math.floor((30 + Math.random() * 30) * FPS);
+                delete ant.carriedAphid;
+            } else {
+                const id = getId();
+                state.aphids[id] = { id, x: clamp(x, 0, MAP_SIZE), y: clamp(y, 0, MAP_SIZE), honeyTimer: 0, lastFedTick: simTick, reproduceTimer: Math.floor((30 + Math.random() * 30) * FPS) };
+            }
+        }
+        ant.carrying = null;
+    });
     socket.on('command', cmd => {
         const p = state.players[socket.id];
         if (p && state.colonies[p.colonyId]) {
@@ -487,8 +567,33 @@ class AntManager {
                 if (col.command === 'forage') {
                     if (!ant.carrying) {
                         if (!currentTarget || ant.searchTimer <= 0) {
-                            // FIX: Increased range 600→900 so ants actually find food
-                            const res = findClosestInGrid(ant, ['meats', 'foods'], 900);
+                            // Prioritize honey over normal food. If no honey/food, take meat.
+                            let res = null;
+                            let bestHoney = null;
+                            let bestHoneyDist = 900;
+                            // Look for honey in foods
+                            const foodRes = findClosestInGrid(ant, ['foods'], 900);
+                            if (foodRes.obj) {
+                                if (foodRes.obj.foodType === 'honey') {
+                                    const d = dist(ant.x, ant.y, foodRes.obj.x, foodRes.obj.y);
+                                    if (d < bestHoneyDist) {
+                                        bestHoney = foodRes.obj;
+                                        bestHoneyDist = d;
+                                        res = foodRes;
+                                    }
+                                } else {
+                                    // Found normal food, but still look for honey
+                                    res = foodRes;
+                                }
+                            }
+                            // If no food found, look for meat
+                            if (!res) {
+                                res = findClosestInGrid(ant, ['meats'], 900);
+                            }
+                            // Prefer honey to normal food if honey is available
+                            if (bestHoney) {
+                                res = { obj: bestHoney, dictName: 'foods' };
+                            }
                             if (res.obj) {
                                 ant.targetId = res.obj.id; ant.targetDict = res.dictName;
                                 ant.searchTimer = 30; // FIX: Reduced search frequency from 20 to 30
@@ -527,9 +632,11 @@ class AntManager {
                             }
                             tx = ant.wanderX; ty = ant.wanderY;
                         }
-                    } else {
+                    } else if (ant.carrying !== 'aphid') {
+                        // If carrying anything other than aphid, deliver to queen
                         if (queen) { tx = queen.x; ty = queen.y; }
                     }
+                    // If carrying aphid, the aphid handling code below will position it near queen
                 }
                 else if (col.command === 'home') {
                     tx = queen.x; ty = queen.y;
@@ -665,15 +772,26 @@ class AntManager {
         ant.x = clamp(tx, 0, MAP_SIZE);
         ant.y = clamp(ty, 0, MAP_SIZE);
 
-        // Pick up food/meat
+        // Pick up food/meat; all ants can pick up aphids
         if (!ant.carrying) {
-            const res = findClosestInGrid(ant, ['foods', 'meats'], 20);
+            const types = ['foods', 'meats', 'aphids'];
+            const res = findClosestInGrid(ant, types, 20);
             const item = res.obj;
             if (item) {
-                ant.carrying = res.dictName === 'foods' ? 'food' : 'meat';
-                if (res.dictName === 'foods') delete state.foods[item.id];
-                if (res.dictName === 'meats') delete state.meats[item.id];
-                // FIX: Clear target so ant doesn't try to walk back to a now-gone food tile
+                if (res.dictName === 'foods') {
+                    // Prioritize honey, then normal food
+                    ant.carrying = item.foodType === 'honey' ? 'honey' : 'food';
+                    delete state.foods[item.id];
+                } else if (res.dictName === 'meats') {
+                    ant.carrying = 'meat';
+                    delete state.meats[item.id];
+                } else if (res.dictName === 'aphids') {
+                    // All ants can pick up aphids now
+                    ant.carrying = 'aphid';
+                    ant.carriedAphidId = item.id; // store the aphid ID
+                    ant.aphidPickupTime = simTick; // track when we picked it up
+                    delete state.aphids[item.id];
+                }
                 ant.targetId = null; ant.targetDict = null;
             }
         }
@@ -682,9 +800,92 @@ class AntManager {
         if (ant.carrying && queen && dist(ant.x, ant.y, queen.x, queen.y) < 40) {
             if (ant.carrying === 'food') queen.food++;
             if (ant.carrying === 'meat') queen.meat++;
+            if (ant.carrying === 'honey') { queen.food++; queen.honeyFed = (queen.honeyFed || 0) + 1; }
+            // Ants should not deliver aphids to queen - drop them instead
+            if (ant.carrying === 'aphid' && ant.carriedAphidId) {
+                const aphid = { id: ant.carriedAphidId, x: ant.x, y: ant.y, honeyTimer: 0, lastFedTick: simTick, reproduceTimer: Math.floor((30 + Math.random() * 30) * FPS), lastFedByAnt: simTick };
+                state.aphids[ant.carriedAphidId] = aphid;
+                ant.carriedAphidId = null;
+            }
             ant.carrying = null;
             ant.targetId = null; ant.targetDict = null;
             ant.searchTimer = 0; // FIX: Immediately resume foraging after delivery
+        }
+        // Super soldiers: if foraging and no threats, stay near queen for protection
+        const aggroedForSuper = (ant.aggroTimer > 0 && ant.aggroTarget) || (ant.assistTimer > 0 && ant.assistTarget) || (ant.underAttackTimer > 0);
+        if (!aggroedForSuper && ant.type === 'super_soldier' && col.command === 'forage' && queen) {
+            const distToQueen = dist(ant.x, ant.y, queen.x, queen.y);
+            if (distToQueen > 200) {
+                // Move back towards queen if too far
+                tx = queen.x + (Math.random() * 100 - 50);
+                ty = queen.y + (Math.random() * 100 - 50);
+            }
+        }
+
+        // Aphid handling: if carrying aphid, move it closer to queen and feed it
+        if (ant.carrying === 'aphid' && queen) {
+            // Position aphid 250-350 units from queen
+            const distToQueen = dist(ant.x, ant.y, queen.x, queen.y);
+            const targetDist = 280 + Math.random() * 40;
+            if (distToQueen > targetDist) {
+                // Move towards queen to get aphid closer
+                const dx = queen.x - ant.x;
+                const dy = queen.y - ant.y;
+                const len = Math.sqrt(dx * dx + dy * dy);
+                if (len > 0.001) {
+                    tx = ant.x + (dx / len) * ant.speed;
+                    ty = ant.y + (dy / len) * ant.speed;
+                }
+            } else if (distToQueen < targetDist - 20) {
+                // Move slightly away from queen to maintain distance
+                const dx = ant.x - queen.x;
+                const dy = ant.y - queen.y;
+                const len = Math.sqrt(dx * dx + dy * dy);
+                if (len > 0.001) {
+                    tx = ant.x + (dx / len) * ant.speed * 0.5;
+                    ty = ant.y + (dy / len) * ant.speed * 0.5;
+                }
+            }
+            
+            // Feed the aphid if we're carrying food, every 15 seconds (375 frames at 25 FPS)
+            if (!ant.aphidFeedTimer) ant.aphidFeedTimer = 0;
+            ant.aphidFeedTimer++;
+            if (ant.aphidFeedTimer >= 15 * FPS) {
+                if (ant.targetId && ant.targetDict === 'foods' && state.foods[ant.targetId]) {
+                    // We already have a food target, move to it
+                    const food = state.foods[ant.targetId];
+                    const foodDist = dist(ant.x, ant.y, food.x, food.y);
+                    if (foodDist < 20) {
+                        // We're at the food, eat it for the aphid
+                        delete state.foods[ant.targetId];
+                        ant.targetId = null;
+                        ant.targetDict = null;
+                        ant.aphidFeedTimer = 0;
+                    } else {
+                        // Move to the food
+                        tx = food.x;
+                        ty = food.y;
+                    }
+                } else {
+                    // Search for nearby food to feed the aphid
+                    const foodRes = findClosestInGrid(ant, ['foods'], 200);
+                    if (foodRes.obj) {
+                        const food = foodRes.obj;
+                        const foodDist = dist(ant.x, ant.y, food.x, food.y);
+                        if (foodDist < 20) {
+                            // At the food, consume it for the aphid
+                            delete state.foods[food.id];
+                            ant.aphidFeedTimer = 0;
+                        } else {
+                            // Move to the food
+                            ant.targetId = food.id;
+                            ant.targetDict = 'foods';
+                            tx = food.x;
+                            ty = food.y;
+                        }
+                    }
+                }
+            }
         }
 
         // Stealing broods (FIX: Only check every 5 updateframes to reduce CPU cost)
@@ -700,6 +901,7 @@ class AntManager {
                 }
             }
         }
+
 
         }
     }
@@ -746,6 +948,7 @@ setInterval(() => {
     simTick++;
     spawnFood();
     spawnBeetle();
+    spawnAphid();
     buildGrid();
 
     // ─── Pre-compute per-tick lookups (eliminates O(n) searches inside loops) ───
@@ -775,6 +978,29 @@ setInterval(() => {
     for (let bId in state.beetles) {
         const b = state.beetles[bId];
         if (b.attackCooldown > 0) b.attackCooldown--;
+
+        // Beetles will eat aphids if close
+        if (b.attackCooldown <= 0) {
+            const aphRes = findClosestInGrid(b, ['aphids'], 30);
+            const aph = aphRes.obj;
+            if (aph) {
+                // Beetle eats the aphid in one bite
+                b.attackCooldown = 40;
+                // Alert nearby soldiers to defend the area
+                const cells = getCellsInRange(aph.x, aph.y, 700);
+                for (const c of cells) {
+                    if (!grid[c]) continue;
+                    for (const ant of grid[c].ants) {
+                        if (ant.type === 'soldier' || ant.type === 'super_soldier') {
+                            ant.aggroTarget = b.id;
+                            ant.aggroTimer = 180;
+                        }
+                    }
+                }
+                // Aphid dies from the bite
+                delete state.aphids[aph.id];
+            }
+        }
 
         if (b.aggroTimer > 0 && b.aggroTarget) {
             b.aggroTimer--;
@@ -814,7 +1040,7 @@ setInterval(() => {
     centralAIUpdateSystem.update(activeCells, colonyPop, queenPerColony, playerAntPerColony);
     // ─── Queen Loop ───
     for (let qId in state.queens) {
-        const q = state.queens[qId];
+        const q = state.queens[qId];``
         let pop = colonyPop[q.colonyId] || 0;
         
         // Only check spawn conditions every 3 frames to reduce CPU cost
@@ -830,6 +1056,54 @@ setInterval(() => {
                 q.meat--;
                 spawnBrood(q, 'soldier');
             }
+            // SPECIAL: If queen has been fed 10 honeydew, lay a SUPER_SOLDIER egg
+            if ((q.honeyFed || 0) >= 10 && pop < MAX_ANTS_PER_COLONY) {
+                q.honeyFed -= 10;
+                spawnBrood(q, 'super_soldier');
+            }
+        }
+    }
+
+    // ─── Aphid Loop: produce honeydew if recently fed ───
+    for (let aId in state.aphids) {
+        const a = state.aphids[aId];
+        if (a.honeyTimer === undefined) a.honeyTimer = 0;
+        if (a.lastFedTick === undefined) a.lastFedTick = 0;
+        if (a.reproduceTimer === undefined) a.reproduceTimer = Math.floor((30 + Math.random() * 30) * FPS);
+        // Reproduction countdown
+        if (a.reproduceTimer > 0) a.reproduceTimer--;
+        if (a.reproduceTimer <= 0) {
+            // Attempt to reproduce (duplicate) if under global cap
+            const current = Object.keys(state.aphids).length;
+            if (current < MAX_APHIDS) {
+                const nid = getId();
+                const angle = Math.random() * Math.PI * 2;
+                const distAway = 30 + Math.random() * 30; // 30-60 seconds spatial offset
+                state.aphids[nid] = { id: nid, x: a.x + Math.cos(angle) * distAway, y: a.y + Math.sin(angle) * distAway, honeyTimer: 0, lastFedTick: 0, reproduceTimer: Math.floor((30 + Math.random() * 30) * FPS) };
+            }
+            // reset parent timer regardless
+            a.reproduceTimer = Math.floor((30 + Math.random() * 30) * FPS);
+        }
+        // If there's food dropped near the aphid, consume it and reset feed timer
+        const nearbyFood = findClosestInGrid(a, ['foods'], 20).obj;
+        if (nearbyFood) {
+            // consume the food and mark as fed
+            if (state.foods[nearbyFood.id]) delete state.foods[nearbyFood.id];
+            a.lastFedTick = simTick;
+            a.honeyTimer = 0;
+            continue;
+        }
+        // Only produce if fed within the last 15 seconds
+        if (simTick - a.lastFedTick <= 15 * FPS) {
+            if (++a.honeyTimer >= 10 * FPS) {
+                a.honeyTimer = 0;
+                const fId = getId();
+                const ang = Math.random() * Math.PI * 2;
+                const distance = 40 + Math.random() * 20; // drop honey 40-60 units away so ants can pick honey, not the aphid
+                const fx = clamp(a.x + Math.cos(ang) * distance, 0, MAP_SIZE);
+                const fy = clamp(a.y + Math.sin(ang) * distance, 0, MAP_SIZE);
+                state.foods[fId] = { id: fId, x: fx, y: fy, foodType: 'honey' };
+            }
         }
     }
 
@@ -840,17 +1114,31 @@ setInterval(() => {
         if (b.hatchTimer === undefined) b.hatchTimer = 0;
         if (++b.hatchTimer >= 30 * FPS) { // 30 seconds worth of frames
             const antId = getId();
-            state.ants[antId] = {
-                id: antId, colonyId: b.colonyId, type: b.type, x: b.x, y: b.y, angle: 0,
-                hp: b.type === 'soldier' ? 30 : 10, maxHp: b.type === 'soldier' ? 30 : 10,
-                dmg: b.type === 'soldier' ? 3 : 1, speed: b.type === 'soldier' ? 2.5 : 4,
-                carrying: null, isPlayer: false, playerId: null, attackCooldown: 0,
-                targetId: null, targetDict: null, searchTimer: 0,
-                aggroTarget: null, aggroTimer: 0,
-                assistTarget: null, assistTimer: 0, assistPriority: 0,
-                underAttackBy: null, underAttackTimer: 0, underAttackX: null, underAttackY: null,
-                wanderX: null, wanderY: null
-            };
+            if (b.type === 'super_soldier') {
+                state.ants[antId] = {
+                    id: antId, colonyId: b.colonyId, type: 'super_soldier', x: b.x, y: b.y, angle: 0,
+                    hp: 90, maxHp: 90,
+                    dmg: 9, speed: 1.6,
+                    carrying: null, isPlayer: false, playerId: null, attackCooldown: 0,
+                    targetId: null, targetDict: null, searchTimer: 0,
+                    aggroTarget: null, aggroTimer: 0,
+                    assistTarget: null, assistTimer: 0, assistPriority: 0,
+                    underAttackBy: null, underAttackTimer: 0, underAttackX: null, underAttackY: null,
+                    wanderX: null, wanderY: null
+                };
+            } else {
+                state.ants[antId] = {
+                    id: antId, colonyId: b.colonyId, type: b.type, x: b.x, y: b.y, angle: 0,
+                    hp: b.type === 'soldier' ? 30 : 10, maxHp: b.type === 'soldier' ? 30 : 10,
+                    dmg: b.type === 'soldier' ? 3 : 1, speed: b.type === 'soldier' ? 2.5 : 4,
+                    carrying: null, isPlayer: false, playerId: null, attackCooldown: 0,
+                    targetId: null, targetDict: null, searchTimer: 0,
+                    aggroTarget: null, aggroTimer: 0,
+                    assistTarget: null, assistTimer: 0, assistPriority: 0,
+                    underAttackBy: null, underAttackTimer: 0, underAttackX: null, underAttackY: null,
+                    wanderX: null, wanderY: null
+                };
+            }
             delete state.broods[b.id];
         }
     }
@@ -864,7 +1152,7 @@ setInterval(() => {
         const viewDist = 1200;
         const localState = {
             players: {}, colonies: state.colonies,
-            ants: {}, foods: {}, meats: {}, beetles: {}, broods: {}, queens: {}
+            ants: {}, foods: {}, meats: {}, beetles: {}, broods: {}, queens: {}, aphids: {}
         };
 
             // Strip inputs from broadcast (saves bandwidth, clients don't need other players' inputs)
@@ -889,6 +1177,10 @@ setInterval(() => {
                 for (const m of grid[c].meats) {
                     const dSq = (myAnt.x - m.x) ** 2 + (myAnt.y - m.y) ** 2;
                     if (dSq < viewDistSq) localState.meats[m.id] = slimMeat(m);
+                }
+                for (const a of grid[c].aphids) {
+                    const dSq = (myAnt.x - a.x) ** 2 + (myAnt.y - a.y) ** 2;
+                    if (dSq < viewDistSq) localState.aphids[a.id] = slimAphid(a);
                 }
                 for (const b of grid[c].beetles) {
                     const dSq = (myAnt.x - b.x) ** 2 + (myAnt.y - b.y) ** 2;
@@ -944,7 +1236,9 @@ function doAttack(attacker, range, explicitTarget = null) {
                 const amount = Math.floor(Math.random() * 4) + 3;
                 for (let i = 0; i < amount; i++) {
                     const mId = getId();
-                    state.meats[mId] = { id: mId, x: target.x + (Math.random() * 30 - 15), y: target.y + (Math.random() * 30 - 15) };
+                    const mx = clamp(target.x + (Math.random() * 30 - 15), 0, MAP_SIZE);
+                    const my = clamp(target.y + (Math.random() * 30 - 15), 0, MAP_SIZE);
+                    state.meats[mId] = { id: mId, x: mx, y: my };
                 }
                 delete state.beetles[target.id];
             } else if (state.ants[target.id]) {

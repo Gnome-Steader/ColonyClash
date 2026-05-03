@@ -43,20 +43,23 @@ let camX = 0, camY = 0;
 const keys = { w: false, a: false, s: false, d: false, space: false };
 const mouse = { x: 0, y: 0, worldX: 0, worldY: 0, clicking: false };
 
-const images = { queen: new Image(), worker: new Image(), soldier: new Image(), beetle: new Image() };
+const images = { queen: new Image(), worker: new Image(), soldier: new Image(), beetle: new Image(), aphid: new Image() };
 images.queen.src = 'Queen.png';
 images.worker.src = 'Worker.png';
 images.soldier.src = 'Soldier.png';
-images.beetle.src = 'Beetle.png'; 
+images.beetle.src = 'Beetle.png';
+images.aphid.src = 'Aphid.png';
 
 const spriteCache = {};
 
 function getTintedSprite(type, color) {
-    const key = `${color}_${type}`;
+    // Map super_soldier to soldier image
+    const imgType = type === 'super_soldier' ? 'soldier' : type;
+    const key = `${color}_${imgType}`;
     if (spriteCache[key]) return spriteCache[key];
 
-    const img = images[type];
-    if (!img.complete || img.width === 0) return null;
+    const img = images[imgType];
+    if (!img || !img.complete || img.width === 0) return null;
 
     const c = document.createElement('canvas');
     c.width = img.width; c.height = img.height;
@@ -82,8 +85,10 @@ function getTintedSprite(type, color) {
 }
 
 function getClearSprite(type) {
-    if (spriteCache[type]) return spriteCache[type];
-    const img = images[type];
+    // Map super_soldier to soldier image
+    const imgType = type === 'super_soldier' ? 'soldier' : type;
+    if (spriteCache[imgType]) return spriteCache[imgType];
+    const img = images[imgType];
     if (!img || !img.complete || img.width === 0) return null;
     const c = document.createElement('canvas');
     c.width = img.width; c.height = img.height;
@@ -95,17 +100,24 @@ function getClearSprite(type) {
         if (data[i] > 230 && data[i+1] > 230 && data[i+2] > 230) data[i+3] = 0; 
     }
     cx.putImageData(imgData, 0, 0);
-    spriteCache[type] = c;
+    spriteCache[imgType] = c;
     return c;
 }
 
 class Particle {
     constructor(x, y, color) {
         this.x = x; this.y = y;
-        this.vx = (Math.random() - 0.5) * 8; this.vy = (Math.random() - 0.5) * 8;
+        this.vx = (Math.random() - 0.5) * 480; this.vy = (Math.random() - 0.5) * 480;
         this.life = 1.0; this.color = color;
     }
-    update() { this.x += this.vx; this.y += this.vy; this.vx *= 0.9; this.vy *= 0.9; this.life -= 0.05; }
+    update(deltaTime) {
+        this.x += this.vx * deltaTime;
+        this.y += this.vy * deltaTime;
+        const drag = Math.pow(0.9, deltaTime * 60);
+        this.vx *= drag;
+        this.vy *= drag;
+        this.life -= 3 * deltaTime;
+    }
     draw(ctx) {
         ctx.globalAlpha = Math.max(0, this.life);
         ctx.fillStyle = this.color;
@@ -119,7 +131,10 @@ class FloatingText {
         this.x = x + (Math.random()*20 - 10); this.y = y - 10;
         this.text = text; this.life = 1.0;
     }
-    update() { this.y -= 1.5; this.life -= 0.03; }
+    update(deltaTime) {
+        this.y -= 90 * deltaTime;
+        this.life -= 1.8 * deltaTime;
+    }
     draw(ctx) {
         ctx.globalAlpha = Math.max(0, this.life);
         ctx.fillStyle = 'white'; ctx.font = "bold 20px Arial";
@@ -166,6 +181,11 @@ window.addEventListener('keyup', e => {
 window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
 window.addEventListener('mousedown', e => { if (e.button === 0) mouse.clicking = true; });
 window.addEventListener('mouseup', e => { if (e.button === 0) mouse.clicking = false; });
+
+canvas.addEventListener('dblclick', (e) => {
+    // Send double-click drop to server with world coords
+    socket.emit('double_click', { x: mouse.worldX, y: mouse.worldY });
+});
 
 document.querySelectorAll('[data-cmd]').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -228,10 +248,7 @@ function drawSprite(sprite, x, y, size, angle) {
     ctx.setTransform(1, 0, 0, 1, -camX, -camY);
 }
 
-function loop() {
-    requestAnimationFrame(loop);
-    if (!gameState) return;
-
+function update(deltaTime) {
     const me = gameState.players[myId];
     let targetCamX = camX, targetCamY = camY;
 
@@ -242,10 +259,30 @@ function loop() {
         socket.emit('input', { keys, mouseX: mouse.worldX, mouseY: mouse.worldY, clicking: mouse.clicking });
     }
 
-    camX += (targetCamX - camX) * 0.15;
-    camY += (targetCamY - camY) * 0.15;
+    const camLerp = 1 - Math.pow(1 - 0.15, deltaTime * 60);
+    camX += (targetCamX - camX) * camLerp;
+    camY += (targetCamY - camY) * camLerp;
     mouse.worldX = mouse.x + camX;
     mouse.worldY = mouse.y + camY;
+
+    for (let i = particles.length - 1; i >= 0; i--) {
+        particles[i].update(deltaTime);
+        if (particles[i].life <= 0) particles.splice(i, 1);
+    }
+    for (let i = texts.length - 1; i >= 0; i--) {
+        texts[i].update(deltaTime);
+        if (texts[i].life <= 0) texts.splice(i, 1);
+    }
+
+    if (screenShake > 0) {
+        screenShake *= Math.pow(0.85, deltaTime * 60);
+        if (screenShake < 0.5) screenShake = 0;
+    }
+}
+
+function draw() {
+    if (!gameState) return;
+    const me = gameState.players[myId];
 
     const isVisible = (x, y) => x >= camX - 100 && x <= camX + canvas.width + 100 && y >= camY - 100 && y <= camY + canvas.height + 100;
 
@@ -254,7 +291,6 @@ function loop() {
 
     if (screenShake > 0) {
         ctx.translate((Math.random() - 0.5) * screenShake, (Math.random() - 0.5) * screenShake);
-        screenShake *= 0.85; if (screenShake < 0.5) screenShake = 0;
     }
     
     ctx.translate(-camX, -camY);
@@ -263,7 +299,7 @@ function loop() {
     for (let id in gameState.foods) {
         let f = gameState.foods[id];
         if (!isVisible(f.x, f.y)) continue;
-        ctx.fillStyle = '#2ecc71';
+        ctx.fillStyle = f.foodType === 'honey' ? '#f1c40f' : '#2ecc71';
         ctx.beginPath(); ctx.arc(f.x, f.y, 6, 0, Math.PI*2); ctx.fill();
     }
 
@@ -272,6 +308,22 @@ function loop() {
         if (!isVisible(m.x, m.y)) continue;
         ctx.fillStyle = '#e74c3c';
         ctx.beginPath(); ctx.arc(m.x, m.y, 7, 0, Math.PI*2); ctx.fill();
+    }
+
+    for (let id in gameState.aphids) {
+        let a = gameState.aphids[id];
+        if (!isVisible(a.x, a.y)) continue;
+        const sprite = getClearSprite('aphid');
+        if (sprite) drawSprite(sprite, a.x, a.y, 28, 0);
+        else { 
+            ctx.fillStyle = '#f39c12'; 
+            ctx.beginPath(); 
+            ctx.arc(a.x, a.y, 10, 0, Math.PI*2); 
+            ctx.fill();
+            ctx.strokeStyle = '#d68910';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
     }
 
     for (let id in gameState.beetles) {
@@ -311,7 +363,7 @@ function loop() {
         let a = gameState.ants[id];
         if (!isVisible(a.x, a.y)) continue;
         const color = gameState.colonies[a.colonyId].color;
-        const size = a.type === 'soldier' ? 40 : 25;
+        const size = a.type === 'soldier' ? 40 : (a.type === 'super_soldier' ? 80 : 25);
         const sprite = getTintedSprite(a.type, color);
 
         let lunge = a.attackCooldown > 15 ? 10 : 0;
@@ -326,23 +378,37 @@ function loop() {
         }
 
         if (a.carrying) {
-            ctx.fillStyle = a.carrying === 'meat' ? '#e74c3c' : '#2ecc71';
-            ctx.beginPath(); ctx.arc(rx + (Math.cos(a.angle)*size/2), ry + (Math.sin(a.angle)*size/2), 5, 0, Math.PI*2); ctx.fill();
+            if (a.carrying === 'meat') {
+                ctx.fillStyle = '#e74c3c';
+                ctx.beginPath(); ctx.arc(rx + (Math.cos(a.angle)*size/2), ry + (Math.sin(a.angle)*size/2), 5, 0, Math.PI*2); ctx.fill();
+            } else if (a.carrying === 'honey') {
+                ctx.fillStyle = '#f1c40f';
+                ctx.beginPath(); ctx.arc(rx + (Math.cos(a.angle)*size/2), ry + (Math.sin(a.angle)*size/2), 5, 0, Math.PI*2); ctx.fill();
+            } else if (a.carrying === 'aphid') {
+                // Draw carried aphid as a sprite
+                const aphidSprite = getClearSprite('aphid');
+                const carryOffsetX = rx + (Math.cos(a.angle)*size/2);
+                const carryOffsetY = ry + (Math.sin(a.angle)*size/2);
+                if (aphidSprite) {
+                    ctx.save();
+                    ctx.setTransform(1, 0, 0, 1, carryOffsetX - camX, carryOffsetY - camY);
+                    ctx.drawImage(aphidSprite, -12, -12, 24, 24);
+                    ctx.restore();
+                    ctx.setTransform(1, 0, 0, 1, -camX, -camY);
+                } else {
+                    ctx.fillStyle = '#f39c12';
+                    ctx.beginPath(); ctx.arc(carryOffsetX, carryOffsetY, 6, 0, Math.PI*2); ctx.fill();
+                }
+            } else {
+                ctx.fillStyle = '#2ecc71'; ctx.beginPath(); ctx.arc(rx + (Math.cos(a.angle)*size/2), ry + (Math.sin(a.angle)*size/2), 5, 0, Math.PI*2); ctx.fill();
+            }
         }
 
-        const maxHp = a.type === 'soldier' ? 30 : 10;
+        const maxHp = a.type === 'soldier' ? 30 : (a.type === 'super_soldier' ? 90 : 10);
         if (a.hp < maxHp) {
-            ctx.fillStyle = 'red'; ctx.fillRect(a.x - 10, a.y - 20, 20 * (a.hp / maxHp), 3);
+            const barW = a.type === 'super_soldier' ? 60 : 20;
+            ctx.fillStyle = 'red'; ctx.fillRect(a.x - barW/2, a.y - 20, barW * (a.hp / maxHp), 3);
         }
-    }
-
-    for (let i = particles.length - 1; i >= 0; i--) {
-        particles[i].update(); particles[i].draw(ctx);
-        if (particles[i].life <= 0) particles.splice(i, 1);
-    }
-    for (let i = texts.length - 1; i >= 0; i--) {
-        texts[i].update(); texts[i].draw(ctx);
-        if (texts[i].life <= 0) texts.splice(i, 1);
     }
 
     ctx.restore();
@@ -352,4 +418,24 @@ function loop() {
     }
 }
 
-loop();
+let lastFrameTime = null;
+
+function loop(timestamp) {
+    requestAnimationFrame(loop);
+
+    const currentTime = typeof timestamp === 'number' ? timestamp : performance.now();
+    if (lastFrameTime === null) {
+        lastFrameTime = currentTime;
+        return;
+    }
+
+    const deltaTime = Math.min((currentTime - lastFrameTime) / 1000, 0.001);
+    lastFrameTime = currentTime;
+
+    if (!gameState) return;
+
+    update(deltaTime);
+    draw();
+}
+
+requestAnimationFrame(loop);
