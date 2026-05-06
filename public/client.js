@@ -43,12 +43,13 @@ let camX = 0, camY = 0;
 const keys = { w: false, a: false, s: false, d: false, space: false };
 const mouse = { x: 0, y: 0, worldX: 0, worldY: 0, clicking: false };
 
-const images = { queen: new Image(), worker: new Image(), soldier: new Image(), beetle: new Image(), aphid: new Image() };
+const images = { queen: new Image(), worker: new Image(), soldier: new Image(), beetle: new Image(), aphid: new Image(), rock: new Image() };
 images.queen.src = 'Queen.png';
 images.worker.src = 'Worker.png';
 images.soldier.src = 'Soldier.png';
 images.beetle.src = 'Beetle.png';
 images.aphid.src = 'Aphid.png';
+images.rock.src = 'Rock.png';
 
 const spriteCache = {};
 
@@ -248,6 +249,40 @@ function drawSprite(sprite, x, y, size, angle) {
     ctx.setTransform(1, 0, 0, 1, -camX, -camY);
 }
 
+function drawRock(rock) {
+    const sprite = images.rock;
+    const size = rock.radius * 2;
+    if (sprite && sprite.complete && sprite.width > 0) {
+        const aspect = sprite.height / sprite.width;
+        const height = size * aspect;
+        drawSprite(sprite, rock.x, rock.y, size, 0);
+        return;
+    }
+
+    ctx.save();
+    ctx.translate(rock.x, rock.y);
+    ctx.fillStyle = '#6b5b4b';
+    ctx.beginPath();
+    ctx.moveTo(-rock.radius * 0.85, -rock.radius * 0.25);
+    ctx.lineTo(-rock.radius * 0.35, -rock.radius * 0.95);
+    ctx.lineTo(rock.radius * 0.55, -rock.radius * 0.7);
+    ctx.lineTo(rock.radius * 0.95, -rock.radius * 0.05);
+    ctx.lineTo(rock.radius * 0.55, rock.radius * 0.85);
+    ctx.lineTo(-rock.radius * 0.45, rock.radius * 0.95);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = '#3f342c';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.beginPath();
+    ctx.ellipse(-rock.radius * 0.18, -rock.radius * 0.22, rock.radius * 0.35, rock.radius * 0.2, -0.35, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+}
+
 function update(deltaTime) {
     const me = gameState.players[myId];
     let targetCamX = camX, targetCamY = camY;
@@ -295,6 +330,12 @@ function draw() {
     
     ctx.translate(-camX, -camY);
     ctx.fillStyle = '#4e342e'; ctx.fillRect(0, 0, 3000, 3000); 
+
+    for (let id in gameState.rocks) {
+        const rock = gameState.rocks[id];
+        if (!isVisible(rock.x, rock.y)) continue;
+        drawRock(rock);
+    }
 
     for (let id in gameState.foods) {
         let f = gameState.foods[id];

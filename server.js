@@ -1,4 +1,5 @@
 const express = require('express');
+const rockMaskData = require('./rock_mask.js');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
@@ -9,7 +10,7 @@ const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-const state = { players: {}, colonies: {}, ants: {}, queens: {}, beetles: {}, foods: {}, meats: {}, broods: {}, aphids: {} };
+const state = { players: {}, colonies: {}, ants: {}, queens: {}, beetles: {}, foods: {}, meats: {}, broods: {}, aphids: {}, rocks: {} };
 
 let idCounter = 1;
 const getId = () => (idCounter++).toString();
@@ -19,8 +20,13 @@ const FPS = 25;
 const MAX_ANTS_PER_COLONY = 800; // Hard cap so we don't accidentally lag out the engine forever
 let hasGameStarted = false;
 let simTick = 0;
+let stateUpdateFrame = 0; // Frame counter for skipping updates when colonies are large
 
 const MAX_APHIDS = 60;
+const ROCK_COUNT_MIN = 5;
+const ROCK_COUNT_MAX = 8;
+const ROCK_SPAWN_CLEARANCE = 70;
+const ROCK_COLLISION_PADDING = 0;
 
 const COLORS = ['#3498db', '#9b59b6', '#e67e22', '#1abc9c', '#f1c40f', '#e84393'];
 
@@ -74,18 +80,87 @@ function isAphidPositionFree(x, y, minDist = 24) {
 }
 
 function getFreeAphidPosition(x, y, minDist = 24) {
-    if (isAphidPositionFree(x, y, minDist)) return { x, y };
+    if (isAphidPositionFree(x, y, minDist) && isSpawnPositionClear(x, y, minDist + ROCK_SPAWN_CLEARANCE)) return { x, y };
 
     for (let i = 0; i < 12; i++) {
         const angle = Math.random() * Math.PI * 2;
         const distance = minDist + Math.random() * minDist;
         const nx = clamp(x + Math.cos(angle) * distance, 0, MAP_SIZE);
         const ny = clamp(y + Math.sin(angle) * distance, 0, MAP_SIZE);
-        if (isAphidPositionFree(nx, ny, minDist)) return { x: nx, y: ny };
+        if (isAphidPositionFree(nx, ny, minDist) && isSpawnPositionClear(nx, ny, minDist + ROCK_SPAWN_CLEARANCE)) return { x: nx, y: ny };
     }
 
     return { x, y };
 }
+
+function isSpawnPositionClear(x, y, buffer = ROCK_SPAWN_CLEARANCE) {
+    const bufferSq = buffer * buffer;
+    for (const rock of Object.values(state.rocks)) {
+        const dx = x - rock.x;
+        const dy = y - rock.y;
+        const minDist = rock.radius + buffer;
+        if (dx * dx + dy * dy < minDist * minDist) return false;
+    }
+    return true;
+}
+
+function getSpawnPosition(buffer = ROCK_SPAWN_CLEARANCE, maxAttempts = 60, margin = 80) {
+    for (let i = 0; i < maxAttempts; i++) {
+        const x = clamp(Math.random() * MAP_SIZE, margin, MAP_SIZE - margin);
+        const y = clamp(Math.random() * MAP_SIZE, margin, MAP_SIZE - margin);
+        if (isSpawnPositionClear(x, y, buffer)) return { x, y };
+    }
+    return {
+        x: clamp(Math.random() * MAP_SIZE, margin, MAP_SIZE - margin),
+        y: clamp(Math.random() * MAP_SIZE, margin, MAP_SIZE - margin)
+    };
+}
+
+function getClearPositionNear(x, y, spread = 60, buffer = ROCK_SPAWN_CLEARANCE, attempts = 16) {
+    for (let i = 0; i < attempts; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const distance = Math.random() * spread;
+        const nx = clamp(x + Math.cos(angle) * distance, 50, MAP_SIZE - 50);
+        const ny = clamp(y + Math.sin(angle) * distance, 50, MAP_SIZE - 50);
+        if (isSpawnPositionClear(nx, ny, buffer)) return { x: nx, y: ny };
+    }
+    return getSpawnPosition(buffer);
+}
+
+function spawnRocks() {
+    const targetCount = ROCK_COUNT_MIN + Math.floor(Math.random() * (ROCK_COUNT_MAX - ROCK_COUNT_MIN + 1));
+    const rocks = [];
+
+    for (let i = 0; i < targetCount; i++) {
+        let placed = false;
+        for (let attempt = 0; attempt < 80 && !placed; attempt++) {
+            const radius = 110 + Math.random() * 70;
+            const x = clamp(120 + Math.random() * (MAP_SIZE - 240), 120, MAP_SIZE - 120);
+            const y = clamp(120 + Math.random() * (MAP_SIZE - 240), 120, MAP_SIZE - 120);
+
+            let valid = true;
+            for (const rock of rocks) {
+                const dx = x - rock.x;
+                const dy = y - rock.y;
+                const minDist = radius + rock.radius + ROCK_SPAWN_CLEARANCE;
+                if (dx * dx + dy * dy < minDist * minDist) {
+                    valid = false;
+                    break;
+                }
+            }
+
+            if (!valid) continue;
+
+            const id = getId();
+            const rock = { id, x, y, radius };
+            rocks.push(rock);
+            state.rocks[id] = rock;
+            placed = true;
+        }
+    }
+}
+
+spawnRocks();
 
 function buildGrid() {
     for (let i = 0; i < grid.length; i++) {
@@ -110,6 +185,160 @@ function buildGrid() {
     for (let id in state.beetles) addToGrid(state.beetles[id], 'beetles');
     for (let id in state.queens)  addToGrid(state.queens[id], 'queens');
     for (let id in state.aphids)  addToGrid(state.aphids[id], 'aphids');
+}
+
+function resolveRockCollision(entity, prevX, prevY, radius = 18) {
+    for (const rock of Object.values(state.rocks)) {
+        const scale = (rock.radius * 2) / rockMaskData.width;
+        const maskW = rockMaskData.width;
+        const maskH = rockMaskData.height;
+
+        // Compute entity bounding box in world coords and map to mask coords
+        const ex0 = entity.x - radius;
+        const ey0 = entity.y - radius;
+        const ex1 = entity.x + radius;
+        const ey1 = entity.y + radius;
+
+        const mx0 = Math.floor((ex0 - (rock.x - rock.radius)) / scale);
+        const my0 = Math.floor((ey0 - (rock.y - rock.radius)) / scale);
+        const mx1 = Math.floor((ex1 - (rock.x - rock.radius)) / scale);
+        const my1 = Math.floor((ey1 - (rock.y - rock.radius)) / scale);
+
+        // Quick reject if bbox doesn't overlap mask bounds
+        if (mx1 < 0 || my1 < 0 || mx0 >= maskW || my0 >= maskH) continue;
+
+        // Clamp to mask
+        const cx0 = Math.max(0, mx0);
+        const cy0 = Math.max(0, my0);
+        const cx1 = Math.min(maskW - 1, mx1);
+        const cy1 = Math.min(maskH - 1, my1);
+
+        // Fast rectangle check using prefix-sum mask
+        if (!rockMaskData.isAreaSolid(cx0, cy0, cx1, cy1)) continue;
+
+        // Check previous position; if it was clear, snap back to prev
+        const pex0 = prevX - radius;
+        const pey0 = prevY - radius;
+        const pex1 = prevX + radius;
+        const pey1 = prevY + radius;
+        const pmx0 = Math.floor((pex0 - (rock.x - rock.radius)) / scale);
+        const pmy0 = Math.floor((pey0 - (rock.y - rock.radius)) / scale);
+        const pmx1 = Math.floor((pex1 - (rock.x - rock.radius)) / scale);
+        const pmy1 = Math.floor((pey1 - (rock.y - rock.radius)) / scale);
+        if (pmx1 < 0 || pmy1 < 0 || pmx0 >= maskW || pmy0 >= maskH) {
+            entity.x = prevX;
+            entity.y = prevY;
+            continue;
+        }
+        const pcx0 = Math.max(0, pmx0);
+        const pcy0 = Math.max(0, pmy0);
+        const pcx1 = Math.min(maskW - 1, pmx1);
+        const pcy1 = Math.min(maskH - 1, pmy1);
+        if (!rockMaskData.isAreaSolid(pcx0, pcy0, pcx1, pcy1)) {
+            entity.x = prevX;
+            entity.y = prevY;
+            continue;
+        }
+
+        // Collision persists: resolve by sliding for workers or radial push for others
+        const dx = entity.x - rock.x;
+        const dy = entity.y - rock.y;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        if (entity.type === 'worker') {
+            const nx = dx / len;
+            const ny = dy / len;
+            let tx = -ny;
+            let ty = nx;
+            const prevRelX = prevX - rock.x;
+            const prevRelY = prevY - rock.y;
+            const dot = prevRelX * tx + prevRelY * ty;
+            if (dot < 0) { tx = -tx; ty = -ty; }
+            const slide = Math.max(12, radius);
+            entity.x = rock.x + nx * (rock.radius + radius + 1) + tx * slide;
+            entity.y = rock.y + ny * (rock.radius + radius + 1) + ty * slide;
+        } else {
+            entity.x = rock.x + (dx / len) * (rock.radius + radius + 1);
+            entity.y = rock.y + (dy / len) * (rock.radius + radius + 1);
+        }
+    }
+}
+
+function worldToRockMaskCoords(rock, x, y) {
+    const scale = (rock.radius * 2) / rockMaskData.width;
+    return {
+        lx: Math.floor((x - (rock.x - rock.radius)) / scale),
+        ly: Math.floor((y - (rock.y - rock.radius)) / scale)
+    };
+}
+
+function isPointInRockMask(rock, x, y) {
+    const { lx, ly } = worldToRockMaskCoords(rock, x, y);
+    if (lx < 0 || ly < 0 || lx >= rockMaskData.width || ly >= rockMaskData.height) return false;
+    return rockMaskData.mask[lx + ly * rockMaskData.width] === 1;
+}
+
+function lineIntersectsRock(rock, x0, y0, x1, y1) {
+    const minX = Math.min(x0, x1);
+    const maxX = Math.max(x0, x1);
+    const minY = Math.min(y0, y1);
+    const maxY = Math.max(y0, y1);
+    if (maxX < rock.x - rock.radius || minX > rock.x + rock.radius || maxY < rock.y - rock.radius || minY > rock.y + rock.radius) {
+        return false;
+    }
+
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    const steps = Math.max(2, Math.ceil(distance / 20));
+    for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const px = x0 + dx * t;
+        const py = y0 + dy * t;
+        if (isPointInRockMask(rock, px, py)) return true;
+    }
+    return false;
+}
+
+function findBlockingRock(x0, y0, x1, y1) {
+    let closestRock = null;
+    let closestDist = Infinity;
+    for (const rock of Object.values(state.rocks)) {
+        const minX = Math.min(x0, x1);
+        const maxX = Math.max(x0, x1);
+        const minY = Math.min(y0, y1);
+        const maxY = Math.max(y0, y1);
+        if (maxX < rock.x - rock.radius - 20 || minX > rock.x + rock.radius + 20 || maxY < rock.y - rock.radius - 20 || minY > rock.y + rock.radius + 20) {
+            continue;
+        }
+        if (!lineIntersectsRock(rock, x0, y0, x1, y1)) continue;
+        const d = Math.hypot(rock.x - x0, rock.y - y0);
+        if (d < closestDist) {
+            closestDist = d;
+            closestRock = rock;
+        }
+    }
+    return closestRock;
+}
+
+function computeRockAvoidancePoint(rock, ant, tx, ty, radius) {
+    const baseAngle = Math.atan2(ant.y - rock.y, ant.x - rock.x);
+    const perp = Math.PI / 2;
+    const avoidDistance = rock.radius + radius + 24;
+
+    const angleToTarget = Math.atan2(ty - rock.y, tx - rock.x);
+    const side = Math.sign(Math.sin(angleToTarget - baseAngle)) || 1;
+    const avoidAngle = baseAngle + perp * side;
+    const px = rock.x + Math.cos(avoidAngle) * avoidDistance;
+    const py = rock.y + Math.sin(avoidAngle) * avoidDistance;
+    if (px >= 0 && py >= 0 && px <= MAP_SIZE && py <= MAP_SIZE) {
+        return { x: px, y: py };
+    }
+    const altAngle = baseAngle + perp * -side;
+    return { x: rock.x + Math.cos(altAngle) * avoidDistance, y: rock.y + Math.sin(altAngle) * avoidDistance };
+    return {
+        x: rock.x + Math.cos(fallbackAngle) * avoidDistance,
+        y: rock.y + Math.sin(fallbackAngle) * avoidDistance
+    };
 }
 
 // How far from a player we consider entities "active" for full AI updates
@@ -303,6 +532,7 @@ const slimBrood  = b => ({ id: b.id, colonyId: b.colonyId, type: b.type, x: Math
 const slimQueen  = q => ({ id: q.id, colonyId: q.colonyId, x: Math.round(q.x), y: Math.round(q.y), angle: Math.round(q.angle * 100)/100, hp: q.hp, food: q.food, meat: q.meat, honeyFed: q.honeyFed || 0 });
 
 const slimAphid   = a => ({ id: a.id, x: Math.round(a.x), y: Math.round(a.y) });
+const slimRock    = r => ({ id: r.id, x: Math.round(r.x), y: Math.round(r.y), radius: Math.round(r.radius) });
 
 function spawnFood() {
     // FIX: Single-pass diff fill, no tight while loop
@@ -310,15 +540,17 @@ function spawnFood() {
     if (current >= 400) return;
     for (let i = current; i < 400; i++) {
         const id = getId();
-        state.foods[id] = { id, x: Math.random() * MAP_SIZE, y: Math.random() * MAP_SIZE };
+        const pos = getSpawnPosition(ROCK_SPAWN_CLEARANCE, 20, 40);
+        state.foods[id] = { id, x: pos.x, y: pos.y };
     }
 }
 
 function spawnBeetle() {
     if (Object.keys(state.beetles).length < 25) {
         const id = getId();
+        const pos = getSpawnPosition(ROCK_SPAWN_CLEARANCE, 20, 60);
         state.beetles[id] = {
-            id, x: Math.random() * MAP_SIZE, y: Math.random() * MAP_SIZE,
+            id, x: pos.x, y: pos.y,
             hp: 50, tx: Math.random() * MAP_SIZE, ty: Math.random() * MAP_SIZE,
             angle: 0, aggroTarget: null, aggroTimer: 0, attackCooldown: 0
         };
@@ -334,8 +566,9 @@ function spawnAphid() {
     // Create aphid colonies: pick a center and spawn 10 aphids around it
     for (let c = 0; c < coloniesNeeded; c++) {
         if (Object.keys(state.aphids).length >= MAX_APHIDS) break;
-        const centerX = clamp(Math.random() * MAP_SIZE, 50, MAP_SIZE - 50);
-        const centerY = clamp(Math.random() * MAP_SIZE, 50, MAP_SIZE - 50);
+        const center = getSpawnPosition(ROCK_SPAWN_CLEARANCE, 40, 100);
+        const centerX = center.x;
+        const centerY = center.y;
         // One aphid at center
         for (let a = 0; a < 1; a++) {
             const id = getId();
@@ -374,13 +607,21 @@ function createColony(playerId) {
     state.colonies[colId] = { id: colId, color: COLORS[Object.keys(state.colonies).length % COLORS.length], command: 'forage', guardX: null, guardY: null };
 
     let qx, qy, valid = false;
-    while (!valid) {
-        qx = 300 + Math.random() * (MAP_SIZE - 600);
-        qy = 300 + Math.random() * (MAP_SIZE - 600);
+    let spawn_attempts = 0;
+    while (!valid && spawn_attempts < 100) {
+        spawn_attempts++;
+        const pos = getSpawnPosition(ROCK_SPAWN_CLEARANCE + 20, 30, 300);
+        qx = pos.x;
+        qy = pos.y;
         valid = true;
         for (let id in state.queens) {
             if (dist(qx, qy, state.queens[id].x, state.queens[id].y) < 1000) { valid = false; break; }
         }
+    }
+    if (!valid) {
+        console.warn('Could not find valid queen spawn position after 100 attempts; using emergency spawn');
+        qx = clamp(Math.random() * MAP_SIZE, 300, MAP_SIZE - 300);
+        qy = clamp(Math.random() * MAP_SIZE, 300, MAP_SIZE - 300);
     }
 
     const queenId = getId();
@@ -392,9 +633,10 @@ function createColony(playerId) {
     for (let i = 0; i < 10; i++) {
         const antId = getId();
         if (i === 0) firstWorkerId = antId;
+        const pos = getClearPositionNear(qx, qy, 30, ROCK_SPAWN_CLEARANCE + 20);
         state.ants[antId] = {
             id: antId, colonyId: colId, type: 'worker',
-            x: qx + (Math.random() * 60 - 30), y: qy + (Math.random() * 60 - 30), angle: 0,
+            x: pos.x, y: pos.y, angle: 0,
             hp: 10, maxHp: 10, dmg: 1, speed: 4, carrying: null,
             isPlayer: (i === 0), playerId: (i === 0 ? playerId : null),
             attackCooldown: 0, targetId: null, targetDict: null,
@@ -451,10 +693,12 @@ io.on('connection', socket => {
 
         if (ant.carrying === 'food' || ant.carrying === 'honey') {
             const id = getId();
-            state.foods[id] = { id, x: clamp(x, 0, MAP_SIZE), y: clamp(y, 0, MAP_SIZE), foodType: ant.carrying === 'honey' ? 'honey' : 'normal' };
+            const pos = getClearPositionNear(clamp(x, 0, MAP_SIZE), clamp(y, 0, MAP_SIZE), 20, ROCK_SPAWN_CLEARANCE);
+            state.foods[id] = { id, x: pos.x, y: pos.y, foodType: ant.carrying === 'honey' ? 'honey' : 'normal' };
         } else if (ant.carrying === 'meat') {
             const id = getId();
-            state.meats[id] = { id, x: clamp(x, 0, MAP_SIZE), y: clamp(y, 0, MAP_SIZE) };
+            const pos = getClearPositionNear(clamp(x, 0, MAP_SIZE), clamp(y, 0, MAP_SIZE), 20, ROCK_SPAWN_CLEARANCE);
+            state.meats[id] = { id, x: pos.x, y: pos.y };
         } else if (ant.carrying === 'aphid') {
             // Re-place the carried aphid where dropped (in front of ant)
             if (ant.carriedAphid) {
@@ -873,6 +1117,29 @@ class AntManager {
                 }
             }
 
+            // Rock avoidance: if the direct path is blocked, route around the nearest rock. Only check every 4 frames to save CPU.
+            if (!ant.isPlayer) {
+                if (ant.avoidRock) {
+                    const keepAvoiding = !(dist(ant.x, ant.y, ant.avoidRock.x, ant.avoidRock.y) < 12 || simTick - ant.avoidRock.createdAt > 60);
+                    if (keepAvoiding) {
+                        tx = ant.avoidRock.x;
+                        ty = ant.avoidRock.y;
+                    } else {
+                        ant.avoidRock = null;
+                    }
+                }
+
+                if (!ant.avoidRock && dist(ant.x, ant.y, tx, ty) > 5 && ((parseInt(ant.id, 10) + simTick) % 4 === 0)) {
+                    const blockingRock = findBlockingRock(ant.x, ant.y, tx, ty);
+                    if (blockingRock) {
+                        const avoidPoint = computeRockAvoidancePoint(blockingRock, ant, tx, ty, ant.type === 'soldier' ? 18 : (ant.type === 'super_soldier' ? 22 : 12));
+                        ant.avoidRock = { x: avoidPoint.x, y: avoidPoint.y, rockId: blockingRock.id, createdAt: simTick };
+                        tx = avoidPoint.x;
+                        ty = avoidPoint.y;
+                    }
+                }
+            }
+
             if (dist(ant.x, ant.y, tx, ty) > 5) {
                 ant.angle = Math.atan2(ty - ant.y, tx - ant.x);
                 tx = ant.x + Math.cos(ant.angle) * ant.speed;
@@ -929,8 +1196,11 @@ class AntManager {
             }
         }
 
+        const prevX = ant.x;
+        const prevY = ant.y;
         ant.x = clamp(tx, 0, MAP_SIZE);
         ant.y = clamp(ty, 0, MAP_SIZE);
+        resolveRockCollision(ant, prevX, prevY, ant.type === 'soldier' ? 18 : (ant.type === 'super_soldier' ? 22 : 12));
 
         // Pick up food/meat; all ants (except super_soldiers) can pick up aphids
         if (!ant.carrying && ant.type !== 'super_soldier') {
@@ -1113,9 +1383,12 @@ setInterval(() => {
                 b.ty = Math.random() * MAP_SIZE;
             }
         }
+        const prevX = b.x;
+        const prevY = b.y;
         b.angle = Math.atan2(b.ty - b.y, b.tx - b.x);
         b.x += Math.cos(b.angle) * 1.5;
         b.y += Math.sin(b.angle) * 1.5;
+        resolveRockCollision(b, prevX, prevY, 22);
     }
 
     // ─── Ant AI Loop ───
@@ -1196,7 +1469,8 @@ setInterval(() => {
                 const distance = 40 + Math.random() * 20; // drop honey 40-60 units away so ants can pick honey, not the aphid
                 const fx = clamp(a.x + Math.cos(ang) * distance, 0, MAP_SIZE);
                 const fy = clamp(a.y + Math.sin(ang) * distance, 0, MAP_SIZE);
-                state.foods[fId] = { id: fId, x: fx, y: fy, foodType: 'honey' };
+                const dropPos = getClearPositionNear(fx, fy, 20, ROCK_SPAWN_CLEARANCE);
+                state.foods[fId] = { id: fId, x: dropPos.x, y: dropPos.y, foodType: 'honey' };
             }
         }
     }
@@ -1238,64 +1512,84 @@ setInterval(() => {
     }
 
     // ─── Network Sync (grid-based view culling — much faster than iterating all entities) ───
-    for (let pId in state.players) {
-        const p = state.players[pId];
-        const myAnt = state.ants[p.antId];
-        if (!myAnt) continue;
-
-        const viewDist = 1200;
-        const localState = {
-            players: {}, colonies: state.colonies,
-            ants: {}, foods: {}, meats: {}, beetles: {}, broods: {}, queens: {}, aphids: {}
-        };
-
-            // Strip inputs from broadcast (saves bandwidth, clients don't need other players' inputs)
-            for (let pid in state.players) {
-                const pl = state.players[pid];
-                localState.players[pid] = { id: pl.id, colonyId: pl.colonyId, antId: pl.antId };
+    // Check if any colony exceeds 350 ants to enable frame skipping for lag reduction
+    let shouldSkipFrame = false;
+    if (stateUpdateFrame % 2 === 1) {
+        // Check if any colony has exceeded 350 ants
+        for (let colonyId in colonyPop) {
+            if (colonyPop[colonyId] > 350) {
+                shouldSkipFrame = true;
+                break;
             }
-
-            // Use spatial grid for large collections
-            const viewCells = getCellsInRange(myAnt.x, myAnt.y, viewDist);
-            const viewDistSq = viewDist * viewDist;
-            for (const c of viewCells) {
-                if (!grid[c]) continue;
-                for (const a of grid[c].ants) {
-                    const dSq = (myAnt.x - a.x) ** 2 + (myAnt.y - a.y) ** 2;
-                    if (dSq < viewDistSq) localState.ants[a.id] = slimAnt(a);
-                }
-                for (const f of grid[c].foods) {
-                    const dSq = (myAnt.x - f.x) ** 2 + (myAnt.y - f.y) ** 2;
-                    if (dSq < viewDistSq) localState.foods[f.id] = slimFood(f);
-                }
-                for (const m of grid[c].meats) {
-                    const dSq = (myAnt.x - m.x) ** 2 + (myAnt.y - m.y) ** 2;
-                    if (dSq < viewDistSq) localState.meats[m.id] = slimMeat(m);
-                }
-                for (const a of grid[c].aphids) {
-                    const dSq = (myAnt.x - a.x) ** 2 + (myAnt.y - a.y) ** 2;
-                    if (dSq < viewDistSq) localState.aphids[a.id] = slimAphid(a);
-                }
-                for (const b of grid[c].beetles) {
-                    const dSq = (myAnt.x - b.x) ** 2 + (myAnt.y - b.y) ** 2;
-                    if (dSq < viewDistSq) localState.beetles[b.id] = slimBeetle(b);
-                }
-            }
-
-            // Broods and queens: iterate directly (fewer entities; also catches ones just spawned this tick, not in grid yet)
-            for (let id in state.broods) {
-                const b = state.broods[id];
-                const dSq = (myAnt.x - b.x) ** 2 + (myAnt.y - b.y) ** 2;
-                if (dSq < viewDistSq) localState.broods[id] = slimBrood(b);
-            }
-            for (let id in state.queens) {
-                const q = state.queens[id];
-                const dSq = (myAnt.x - q.x) ** 2 + (myAnt.y - q.y) ** 2;
-                if (dSq < viewDistSq) localState.queens[id] = slimQueen(q);
-            }
-
-            io.to(p.id).emit('state', localState);
         }
+    }
+    stateUpdateFrame++;
+
+    // Only send state updates if not skipping this frame
+    if (!shouldSkipFrame) {
+        for (let pId in state.players) {
+            const p = state.players[pId];
+            const myAnt = state.ants[p.antId];
+            if (!myAnt) continue;
+
+            const viewDist = 1200;
+            const localState = {
+                players: {}, colonies: state.colonies,
+                ants: {}, foods: {}, meats: {}, beetles: {}, broods: {}, queens: {}, aphids: {}, rocks: state.rocks
+            };
+
+                // Strip inputs from broadcast (saves bandwidth, clients don't need other players' inputs)
+                for (let pid in state.players) {
+                    const pl = state.players[pid];
+                    localState.players[pid] = { id: pl.id, colonyId: pl.colonyId, antId: pl.antId };
+                }
+
+                // Use spatial grid for large collections
+                const viewCells = getCellsInRange(myAnt.x, myAnt.y, viewDist);
+                const viewDistSq = viewDist * viewDist;
+                for (const c of viewCells) {
+                    if (!grid[c]) continue;
+                    for (const a of grid[c].ants) {
+                        const dSq = (myAnt.x - a.x) ** 2 + (myAnt.y - a.y) ** 2;
+                        if (dSq < viewDistSq) localState.ants[a.id] = slimAnt(a);
+                    }
+                    for (const f of grid[c].foods) {
+                        const dSq = (myAnt.x - f.x) ** 2 + (myAnt.y - f.y) ** 2;
+                        if (dSq < viewDistSq) localState.foods[f.id] = slimFood(f);
+                    }
+                    for (const m of grid[c].meats) {
+                        const dSq = (myAnt.x - m.x) ** 2 + (myAnt.y - m.y) ** 2;
+                        if (dSq < viewDistSq) localState.meats[m.id] = slimMeat(m);
+                    }
+                    for (const a of grid[c].aphids) {
+                        const dSq = (myAnt.x - a.x) ** 2 + (myAnt.y - a.y) ** 2;
+                        if (dSq < viewDistSq) localState.aphids[a.id] = slimAphid(a);
+                    }
+                    for (const b of grid[c].beetles) {
+                        const dSq = (myAnt.x - b.x) ** 2 + (myAnt.y - b.y) ** 2;
+                        if (dSq < viewDistSq) localState.beetles[b.id] = slimBeetle(b);
+                    }
+                }
+
+                // Broods and queens: iterate directly (fewer entities; also catches ones just spawned this tick, not in grid yet)
+                for (let id in state.broods) {
+                    const b = state.broods[id];
+                    const dSq = (myAnt.x - b.x) ** 2 + (myAnt.y - b.y) ** 2;
+                    if (dSq < viewDistSq) localState.broods[id] = slimBrood(b);
+                }
+                for (let id in state.queens) {
+                    const q = state.queens[id];
+                    const dSq = (myAnt.x - q.x) ** 2 + (myAnt.y - q.y) ** 2;
+                    if (dSq < viewDistSq) localState.queens[id] = slimQueen(q);
+                }
+
+                for (let id in state.rocks) {
+                    localState.rocks[id] = slimRock(state.rocks[id]);
+                }
+
+                io.to(p.id).emit('state', localState);
+            }
+    }
 }, 1000 / FPS);
 
 function doAttack(attacker, range, explicitTarget = null) {
@@ -1332,7 +1626,8 @@ function doAttack(attacker, range, explicitTarget = null) {
                     const mId = getId();
                     const mx = clamp(target.x + (Math.random() * 30 - 15), 0, MAP_SIZE);
                     const my = clamp(target.y + (Math.random() * 30 - 15), 0, MAP_SIZE);
-                    state.meats[mId] = { id: mId, x: mx, y: my };
+                    const pos = getClearPositionNear(mx, my, 20, ROCK_SPAWN_CLEARANCE);
+                    state.meats[mId] = { id: mId, x: pos.x, y: pos.y };
                 }
                 delete state.beetles[target.id];
             } else if (state.ants[target.id]) {
@@ -1379,7 +1674,8 @@ function spawnBrood(queen, type) {
     const id = getId();
     const angle = Math.random() * Math.PI * 2;
     const distance = 40 + Math.random() * 25;
-    state.broods[id] = { id, colonyId: queen.colonyId, type, x: queen.x + Math.cos(angle) * distance, y: queen.y + Math.sin(angle) * distance, age: 0 };
+    const pos = getClearPositionNear(queen.x + Math.cos(angle) * distance, queen.y + Math.sin(angle) * distance, 50, ROCK_SPAWN_CLEARANCE + 20);
+    state.broods[id] = { id, colonyId: queen.colonyId, type, x: pos.x, y: pos.y, age: 0 };
 }
 
 const PORT = process.env.PORT || 3000;
