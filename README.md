@@ -291,7 +291,6 @@ By using this project, you agree to these terms.
 
 - **Issues**: Report bugs or request features via [GitHub Issues](https://github.com/Gnome-Steader/ColonyClash/issues).
 - **Discussions**: Join community talks on [GitHub Discussions](https://github.com/Gnome-Steader/ColonyClash/discussions).
-- **Contact**: Reach out via GitHub profile.
 
 Enjoy Colony Clash! May the strongest colony win. 
 
