@@ -283,6 +283,21 @@ function drawRock(rock) {
     ctx.restore();
 }
 
+function drawRoundedRect(x, y, width, height, radius) {
+    const r = Math.min(radius, width / 2, height / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + width - r, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+    ctx.lineTo(x + width, y + height - r);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+    ctx.lineTo(x + r, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+}
+
 function update(deltaTime) {
     const me = gameState.players[myId];
     let targetCamX = camX, targetCamY = camY;
@@ -329,7 +344,7 @@ function draw() {
     }
     
     ctx.translate(-camX, -camY);
-    ctx.fillStyle = '#4e342e'; ctx.fillRect(0, 0, 3000, 3000); 
+    ctx.fillStyle = '#006400'; ctx.fillRect(0, 0, 3000, 3000);
 
     for (let id in gameState.rocks) {
         const rock = gameState.rocks[id];
@@ -384,11 +399,22 @@ function draw() {
         if (!isVisible(b.x, b.y)) continue;
         const colonyColor = gameState.colonies[b.colonyId].color;
         ctx.fillStyle = colonyColor;
-        ctx.beginPath();
-        if (b.age < 5) { ctx.arc(b.x, b.y, 4, 0, Math.PI*2); } 
-        else if (b.age < 20) { ctx.ellipse(b.x, b.y, 7, 4, 0, 0, Math.PI*2); } 
-        else { ctx.ellipse(b.x, b.y, 6, 5, 0, 0, Math.PI*2); } 
-        ctx.fill(); ctx.strokeStyle = 'white'; ctx.stroke();
+        const stage = b.stage || 'egg';
+        if (stage === 'egg') {
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, 5, 0, Math.PI * 2);
+            ctx.fill();
+        } else if (stage === 'larva') {
+            ctx.beginPath();
+            ctx.ellipse(b.x, b.y, 9, 5, 0.2, 0, Math.PI * 2);
+            ctx.fill();
+        } else {
+            drawRoundedRect(b.x - 8, b.y - 6, 16, 12, 4);
+            ctx.fill();
+        }
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
     }
 
     for (let id in gameState.queens) {

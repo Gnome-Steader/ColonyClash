@@ -6,7 +6,10 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+    pingTimeout: 60000,
+    pingInterval: 25000
+});
 
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -528,7 +531,21 @@ const slimAnt    = a => ({ id: a.id, colonyId: a.colonyId, type: a.type, x: Math
 const slimBeetle = b => ({ id: b.id, x: Math.round(b.x), y: Math.round(b.y), angle: Math.round(b.angle * 100)/100, hp: b.hp, attackCooldown: b.attackCooldown });
 const slimFood   = f => ({ id: f.id, x: Math.round(f.x), y: Math.round(f.y), foodType: f.foodType || 'normal' });
 const slimMeat   = m => ({ id: m.id, x: Math.round(m.x), y: Math.round(m.y) });
-const slimBrood  = b => ({ id: b.id, colonyId: b.colonyId, type: b.type, x: Math.round(b.x), y: Math.round(b.y), age: Math.round(b.age) });
+const BROOD_HATCH_FRAMES = 30 * FPS;
+function getBroodStage(hatchTimer = 0) {
+    if (hatchTimer < BROOD_HATCH_FRAMES / 3) return 'egg';
+    if (hatchTimer < (BROOD_HATCH_FRAMES * 2) / 3) return 'larva';
+    return 'pupa';
+}
+const slimBrood  = b => ({
+    id: b.id,
+    colonyId: b.colonyId,
+    type: b.type,
+    x: Math.round(b.x),
+    y: Math.round(b.y),
+    hatchTimer: b.hatchTimer || 0,
+    stage: getBroodStage(b.hatchTimer || 0)
+});
 const slimQueen  = q => ({ id: q.id, colonyId: q.colonyId, x: Math.round(q.x), y: Math.round(q.y), angle: Math.round(q.angle * 100)/100, hp: q.hp, food: q.food, meat: q.meat, honeyFed: q.honeyFed || 0 });
 
 const slimAphid   = a => ({ id: a.id, x: Math.round(a.x), y: Math.round(a.y) });
@@ -1480,7 +1497,7 @@ setInterval(() => {
         const b = state.broods[bId];
         // Initialize hatchTimer if not present (framebased counter = more efficient than age += 1/FPS)
         if (b.hatchTimer === undefined) b.hatchTimer = 0;
-        if (++b.hatchTimer >= 30 * FPS) { // 30 seconds worth of frames
+        if (++b.hatchTimer >= BROOD_HATCH_FRAMES) { // 30 seconds worth of frames
             const antId = getId();
             if (b.type === 'super_soldier') {
                 state.ants[antId] = {
@@ -1675,7 +1692,7 @@ function spawnBrood(queen, type) {
     const angle = Math.random() * Math.PI * 2;
     const distance = 40 + Math.random() * 25;
     const pos = getClearPositionNear(queen.x + Math.cos(angle) * distance, queen.y + Math.sin(angle) * distance, 50, ROCK_SPAWN_CLEARANCE + 20);
-    state.broods[id] = { id, colonyId: queen.colonyId, type, x: pos.x, y: pos.y, age: 0 };
+    state.broods[id] = { id, colonyId: queen.colonyId, type, x: pos.x, y: pos.y, hatchTimer: 0 };
 }
 
 const PORT = process.env.PORT || 3000;
