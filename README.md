@@ -281,7 +281,7 @@ The following restrictions apply:
 - **No Redistribution**: You may not copy, upload, mirror, publish, or otherwise redistribute this project or any of its files in any form.
 - **No Commercial Use**: You may not sell, license, rent, monetize, or use this project or any part of it for commercial purposes.
 - **No Derivative Distribution**: You may not distribute modified versions, forks, or derivative works of this project.
-- **Pull Requests Allowed**: You may create modified versions only for the purpose of submitting pull requests to the official repository. Creating forks or modifications for any other purpose is prohibited.
+- **Pull Requests Allowed**: You may create modified versions only for the purpose of submitting pull requests to the official repository.
 - **No Asset Extraction**: You may not extract, reuse, or repurpose any assets (including art, code, audio, or writing) outside of this project.
 - **Ownership**: All rights, title, and interest in this project remain with the copyright holder.
 
