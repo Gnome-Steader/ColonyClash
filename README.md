@@ -1,297 +1,137 @@
-# Colony Clash
+# ColonyClash 🐜⚔️
 
 [![License](https://img.shields.io/badge/License-Custom%20Restrictions-blue.svg)](LICENSE)
 [![Node.js Version](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
 [![Game Status](https://img.shields.io/badge/Status-Playable-brightgreen.svg)]()
+[![GitHub Stars](https://img.shields.io/github/stars/Gnome-Steader/ColonyClash?style=social)](https://github.com/Gnome-Steader/ColonyClash/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/Gnome-Steader/ColonyClash?style=social)](https://github.com/Gnome-Steader/ColonyClash/network/members)
 
-A real-time multiplayer ant colony simulation game where players build and command ant colonies to compete against each other in a battle for survival. Control queens, workers, and soldiers to forage, defend, and attack on a shared map. Experience the thrill of colony management in a dynamic, competitive environment!
+ColonyClash is a real-time multiplayer ant colony simulation game where players build and command ant colonies to compete against each other in a battle for survival. Control queens, workers, and soldiers to forage, defend, and attack on a shared map. Built using **Node.js**, **Socket.IO**, and **HTML5 Canvas**, this game offers a dynamic and competitive strategy experience directly in your web browser.
 
-## Table of Contents
+---
 
-- [Description](#description)
-- [Features](#features)
-- [Demo](#demo)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Getting Started](#getting-started)
-- [How to Play](#how-to-play)
-- [Game Mechanics](#game-mechanics)
-- [Controls](#controls)
-- [Strategies](#strategies)
-- [Technologies](#technologies)
-- [Architecture](#architecture)
-- [Contributing](#contributing)
-- [Development](#development)
-- [Troubleshooting](#troubleshooting)
-- [FAQ](#faq)
-- [Changelog](#changelog)
-- [Credits](#credits)
-- [License](#license)
-- [Support](#support)
+## Key Features
 
-## Description
+-   **Real-time Multiplayer:** Engage with other players on a live, shared game map, fostering dynamic interactions and competition.
+-   **Strategic Colony Management:** Command queens, workers, and soldiers to expand your territory, gather resources, and defend your nest.
+-   **Dynamic Resource Foraging:** Strategically direct workers to forage for food and other resources essential for colony growth and unit production.
+-   **Intense PvP Battles:** Orchestrate complex attacks and defenses against rival ant colonies using your soldier units.
+-   **HTML5 Canvas Graphics:** Enjoy fluid, browser-based gameplay with rich visuals rendered directly in your web browser, requiring no external downloads.
+-   **Node.js & Socket.IO Backend:** Experience low-latency, real-time communication for smooth and responsive gameplay, ensuring every command is executed precisely.
 
-In **Colony Clash**, players control ant colonies on a vast shared map. Each colony begins with a queen ant that produces worker and soldier ants. Workers gather essential resources like food and meat to sustain and grow the colony, while soldiers protect the queen and engage in combat with enemy ants and beetles.
+---
 
-The game combines strategy, real-time action, and multiplayer competition. Survive by building a strong colony, managing resources efficiently, and outmaneuvering opponents. Will your colony rise to dominance, or be crushed under the weight of rival ants?
+## Technologies Used
 
-Key themes include:
-- **Survival**: Protect your queen at all costs.
-- **Resource Management**: Balance foraging, production, and defense.
-- **Combat**: Engage in tactical battles with enemies.
-- **Multiplayer Dynamics**: Collaborate or compete in real-time with other players.
+### Languages
 
-## Features
+-   JavaScript
+-   TypeScript
 
-- **Real-time Multiplayer**: Connect with friends and battle live using WebSockets (Socket.IO). Supports multiple players on the same server.
-- **Ant Types**:
-  - **Queen**: The heart of your colony. Produces new ants using food and meat resources. If the queen dies, the game ends for that player.
-  - **Workers**: Essential for gathering. They collect food and meat, and can steal enemy brood to expand your colony.
-  - **Soldiers**: Elite defenders. They protect the queen, patrol areas, and attack enemies aggressively.
-- **Commands**:
-  - **Forage**: Send ants to search for food and meat across the map.
-  - **Home**: Order all ants to return to the queen for safety.
-  - **Guard Home**: Defend the queen's immediate area against threats.
-  - **Guard Area**: Protect a specific location by stationing ants there.
-  - **Attack**: Command ants to aggressively hunt down enemies.
-  - **Follow**: Have ants follow a player-controlled ant for coordinated movements.
-- **Enemies**: Wild beetles roam the map. Defeating them provides valuable meat resources.
-- **Resources**:
-  - **Food**: Used to produce worker ants. Essential for colony growth.
-  - **Meat**: Required for soldier ants. Critical for defense and offense.
-- **Spatial Optimization**: Utilizes a grid-based system for efficient entity management, collision detection, and rendering. Ensures smooth performance even with many ants on screen.
-- **Persistent Sessions**: Games continue until only one colony survives.
-- **Cross-Platform**: Runs in any modern web browser with HTML5 support.
+### Tools & Frameworks
 
-## Demo
+-   Node.js
+-   Socket.IO
+-   HTML5 Canvas
+-   GitHub Actions (for CI/CD)
 
-Experience Colony Clash live! Play the game online at: [https://ColonyClash.onrender.com](https://ColonyClash.onrender.com)
+---
 
-*Note: The demo is hosted on Render and may have uptime limitations. For the best experience, run the game locally.*
+## Prerequisites
 
-## Requirements
+Before you can run ColonyClash, ensure you have the following installed on your system:
 
-- **Node.js**: Version 18 or higher. Download from [nodejs.org](https://nodejs.org/).
-- **npm**: Comes bundled with Node.js.
-- **Web Browser**: Modern browser with WebSocket support (e.g., Chrome, Firefox, Edge).
-- **Internet Connection**: Required for multiplayer mode and initial setup.
+-   **Node.js**: Version 18 or higher is recommended.
+    -   [Download Node.js](https://nodejs.org/en/download/)
+-   **npm** (Node Package Manager): Typically comes bundled with Node.js.
 
-## Installation
+---
 
-Follow these steps to set up Colony Clash on your local machine:
+## Installation & Setup
 
-1. **Clone the Repository**:
-   ```bash
-   git clone https://github.com/Gnome-Steader/ColonyClash.git
-   cd ColonyClash
-   ```
+Follow these steps to get ColonyClash up and running on your local machine:
 
-2. **Install Dependencies**:
-   ```bash
-   npm install
-   ```
-   This will install all necessary packages, including Express, Socket.IO, and others.
+1.  **Clone the Repository:**
+    ```bash
+    git clone https://github.com/Gnome-Steader/ColonyClash.git
+    cd ColonyClash
+    ```
 
-3. **Start the Server**:
-   ```bash
-   npm start
-   ```
-   The server will start on port 3000 by default. You can change the port by setting the `PORT` environment variable.
+2.  **Install Dependencies:**
+    Navigate into the project directory and install all required Node.js packages:
+    ```bash
+    npm install
+    ```
 
-4. **Access the Game**:
-   Open your web browser and navigate to `http://localhost:3000` (or the specified port).
+3.  **Start the Game Server:**
+    Once dependencies are installed, you can start the game server:
+    ```bash
+    npm start
+    ```
+    The server should now be running, typically on `http://localhost:3000` (or another port if specified in the application configuration).
 
-5. **Optional: Development Mode**:
-   For development with auto-restart:
-   ```bash
-   npm run dev
-   ```
-   *Note: You may need to install nodemon globally if not already available: `npm install -g nodemon`*
+4.  **Access the Game:**
+    Open your favorite web browser and navigate to the address where the server is running (e.g., `http://localhost:3000`).
 
-## Getting Started
+---
 
-- **Single Player**: Start the server and connect alone. The game will begin when at least one player is present, but multiplayer is recommended for full enjoyment.
-- **Multiplayer**: Share the server URL with friends. Each player connects via their browser. The game starts automatically when multiple players join.
-- **Joining a Game**: Click "Join Game" or similar button on the homepage. You'll spawn with your initial worker ant.
-- **Objective**: Build your colony, gather resources, and eliminate rival queens while protecting your own.
+## Usage
 
-## How to Play
+Once the server is running and you've accessed the game in your browser, you can start playing:
 
-1. **Spawn**: Begin with a queen and one worker ant.
-2. **Control Your Ant**: Use keyboard and mouse to move and interact.
-3. **Gather Resources**: Send workers to forage for food and meat.
-4. **Produce Ants**: Use resources at the queen to create more workers or soldiers.
-5. **Defend and Attack**: Assign soldiers to guard or attack as needed.
-6. **Survive**: Keep your queen alive while targeting others.
-7. **Victory**: Be the last colony standing.
+-   **Join a Game:** You'll be prompted to join an existing game room or create a new one.
+-   **Command Your Colony:** Use the intuitive in-game interface to direct your ant units:
+    -   Send **workers** to forage for food and other vital resources to sustain and grow your colony.
+    -   Position **soldiers** strategically for defense against invaders or to launch an attack on rival colonies.
+    -   Manage your **queen** to lay eggs, expanding your population and unlocking new units.
+-   **Compete:** Strategize to outmaneuver and defeat rival ant colonies, dominating the shared map and ensuring your colony's survival.
 
-## Game Mechanics
+### API Documentation
 
-### Ant Production
-- Queens produce ants based on available resources.
-- Workers cost food; soldiers cost meat.
-- Production time varies by ant type (workers faster than soldiers).
+ColonyClash leverages **Socket.IO** for all real-time communication between the client (web browser) and the server (Node.js). While formal API endpoint documentation is not provided externally, the core interaction revolves around emitting and listening to custom events for various game actions (e.g., `moveAnt`, `attackTarget`, `collectResource`, `buildNest`).
 
-### Resource System
-- Food spawns randomly on the map.
-- Meat is obtained from defeated beetles or stolen brood.
-- Resources are finite and regenerate over time.
+Developers interested in understanding the client-server communication protocols can inspect the source code, particularly the Socket.IO event handlers on both the server and client sides, to see how game state changes are propagated and managed.
 
-### Combat
-- Soldiers attack with melee strikes.
-- Damage is based on ant type and health.
-- Ants have health points; defeated ants drop resources or brood.
+---
 
-### Map Dynamics
-- Shared world with roaming beetles.
-- Grid-based movement for precise positioning.
-- Boundaries prevent ants from wandering off-map.
+## Configuration
 
-### Multiplayer Interactions
-- Players can steal brood from enemy colonies.
-- No friendly fire; ants only target enemies.
-- Real-time updates ensure synchronized gameplay.
+Currently, ColonyClash offers minimal external configuration options. Key settings such as the server port or specific game parameters are typically defined within the server-side JavaScript files.
 
-## Controls
+-   **Server Port:** The default port is usually configured within the main server file (e.g., `app.js` or `server.js`). You might be able to change it by modifying the relevant code directly or by setting an environment variable (e.g., `PORT=8080 npm start`) if that functionality has been implemented.
 
-- **Movement**: WASD keys to move your controlled ant.
-- **Camera**: Mouse to pan the view.
-- **Attack**: Left-click to attack nearby enemies.
-- **Commands**: Use on-screen buttons or hotkeys (e.g., F for Forage, H for Home).
-- **Select Ants**: Click on ants to take control or issue commands.
-
-*Full control scheme available in-game via the help menu.*
-
-## Strategies
-
-- **Early Game**: Focus on foraging to build a worker army.
-- **Mid Game**: Produce soldiers to defend while expanding.
-- **Late Game**: Aggressive attacks on weak colonies.
-- **Defense**: Guard your queen and key resource areas.
-- **Offense**: Scout enemy positions and strike vulnerable spots.
-- **Resource Balance**: Maintain a mix of workers and soldiers.
-
-## Technologies
-
-- **Backend**: Node.js with Express for server logic, Socket.IO for real-time communication.
-- **Frontend**: HTML5 Canvas for 2D rendering and game loop.
-- **Networking**: WebSockets for low-latency multiplayer.
-- **Deployment**: Hosted on Render for easy access.
-
-## Architecture
-
-The game uses a client-server architecture:
-
-- **Server**: Handles game state, entity updates, and broadcasts to clients.
-- **Client**: Renders the game world, sends inputs to server.
-- **Entities**: Managed in a grid for efficient collision and updates.
-- **Real-time Sync**: Socket.IO ensures all players see the same state.
-
-For more technical details, see the source code in `server.js` and `public/`.
+---
 
 ## Contributing
 
-Contributions are welcome! We encourage community involvement to improve Colony Clash.
+We welcome and appreciate contributions from the community! If you'd like to contribute to ColonyClash, please follow these guidelines:
 
-1. **Fork the Repository**: Create your own fork.
-2. **Create a Branch**: `git checkout -b feature/your-feature`
-3. **Make Changes**: Implement your feature or fix.
-4. **Test**: Ensure the game runs correctly.
-5. **Submit a Pull Request**: Describe your changes clearly.
+1.  **Fork the repository.**
+2.  **Create a new branch** for your feature or bug fix:
+    ```bash
+    git checkout -b feature/your-feature-name
+    # or for bug fixes
+    git checkout -b bugfix/issue-description
+    ```
+3.  **Make your changes.**
+4.  **Commit your changes** with a clear and concise message following conventional commits if possible (e.g., `feat: Add new game mechanic`, `fix: Resolve movement bug`).
+    ```bash
+    git commit -m "feat: Add new game mechanic for resource management"
+    ```
+5.  **Push to your fork:**
+    ```bash
+    git push origin feature/your-feature-name
+    ```
+6.  **Open a Pull Request** to the `main` branch of the original repository.
 
-Please follow these guidelines:
-- Keep code clean and commented.
-- Test multiplayer scenarios.
-- Respect the license restrictions.
+Please ensure your code adheres to existing coding styles and conventions, and includes relevant tests if applicable.
 
-## Development
-
-### Project Structure
-```
-ColonyClash/
-├── server.js          # Main server file
-├── public/            # Client-side files
-│   ├── index.html     # Game HTML
-│   ├── style.css      # Game styles
-│   └── game.js        # Client game logic
-├── package.json       # Dependencies and scripts
-└── README.md          # This file
-```
-
-### Adding Features
-- Server-side changes in `server.js`.
-- Client updates in `public/game.js`.
-- UI changes in `public/index.html` and `style.css`.
-
-### Testing
-- Run locally and test with multiple browser tabs.
-- Check console for errors.
-- Validate multiplayer sync.
-
-## Troubleshooting
-
-- **Server Won't Start**: Ensure Node.js 18+ is installed. Check for port conflicts.
-- **Game Not Loading**: Clear browser cache. Ensure WebSockets are enabled.
-- **Lag in Multiplayer**: Check internet connection. Server may be overloaded.
-- **Ants Not Responding**: Verify commands are issued correctly. Check client-server connection.
-- **Errors in Console**: Look for specific error messages and search issues or contact support.
-
-## FAQ
-
-**Q: Can I play solo?**  
-A: Yes, but the game is designed for multiplayer. Solo mode allows testing.
-
-**Q: How many players can join?**  
-A: Unlimited in theory, but performance may degrade with many players.
-
-**Q: Is the game free?**  
-A: Yes, for personal use. See license for restrictions.
-
-**Q: Can I modify the game?**  
-A: For personal use or pull requests only. No redistribution.
-
-**Q: Why ants?**  
-A: Ant colonies are fascinating systems of cooperation and competition!
-
-## Changelog
-
-### Version 1.0.0 (Latest)
-- Initial release with core gameplay.
-- Real-time multiplayer support.
-- Basic ant types and commands.
-- Hosted demo on Render.
-
-*For older versions, check git history.*
-
-## Credits
-
-- **Developer**: Gnome-Steader
-- **Inspiration**: Real ant colony behaviors, strategy games like Civilization.
-- **Libraries**: Socket.IO, Express, and other npm packages.
-- **Community**: Thanks to early testers and contributors.
+---
 
 ## License
 
-Copyright © Gnome-Steader 2026
+This project is licensed under a custom license with specific restrictions. Please refer to the [LICENSE](LICENSE) file in the root of this repository for full details.
 
-Permission is granted to any user to download, install, and run this project for personal use only.
-
-The following restrictions apply:
-
-- **No Redistribution**: You may not copy, upload, mirror, publish, or otherwise redistribute this project or any of its files in any form.
-- **No Commercial Use**: You may not sell, license, rent, monetize, or use this project or any part of it for commercial purposes.
-- **No Derivative Distribution**: You may not distribute modified versions, forks, or derivative works of this project.
-- **Pull Requests Allowed**: You may create modified versions only for the purpose of submitting pull requests to the official repository.
-- **No Asset Extraction**: You may not extract, reuse, or repurpose any assets (including art, code, audio, or writing) outside of this project.
-- **Ownership**: All rights, title, and interest in this project remain with the copyright holder.
-
-By using this project, you agree to these terms.
-
-## Support
-
-- **Issues**: Report bugs or request features via [GitHub Issues](https://github.com/Gnome-Steader/ColonyClash/issues).
-- **Discussions**: Join community talks on [GitHub Discussions](https://github.com/Gnome-Steader/ColonyClash/discussions).
-
-Enjoy Colony Clash! May the strongest colony win. 
+---
 
 Made with ❤ by Gnome-Steader
