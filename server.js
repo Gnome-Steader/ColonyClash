@@ -13,7 +13,13 @@ const io = new Server(server, {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+app.post('/hibernate', (req, res) => {
+    executeHibernation();
+    res.json({ success: true, message: 'Hibernation triggered.' });
+});
+
 const state = { players: {}, colonies: {}, ants: {}, queens: {}, beetles: {}, foods: {}, meats: {}, broods: {}, aphids: {}, rocks: {} };
+const connectedSockets = new Set();
 
 let idCounter = 1;
 const getId = () => (idCounter++).toString();
@@ -25,6 +31,15 @@ let hasGameStarted = false;
 let simTick = 0;
 let stateUpdateFrame = 0; // Frame counter for skipping updates when colonies are large
 
+// Hibernation cycle
+let hibernationWarningTime = null;
+let hibernationStartTime = null;
+let nextHibernationCycleStart = null;
+const HIBERNATION_COOLDOWN_MIN = 120 * FPS; // 2 minutes in frames
+const HIBERNATION_COOLDOWN_MAX = 240 * FPS; // 4 minutes in frames
+const HIBERNATION_WARNING_TIME = 30 * FPS; // 30 seconds warning
+const HIBERNATION_NEST_RADIUS = 300; // Ants within this distance of queen are safe
+
 const MAX_APHIDS = 60;
 const ROCK_COUNT_MIN = 5;
 const ROCK_COUNT_MAX = 8;
@@ -32,6 +47,26 @@ const ROCK_SPAWN_CLEARANCE = 70;
 const ROCK_COLLISION_PADDING = 0;
 
 const COLORS = ['#3498db', '#9b59b6', '#e67e22', '#1abc9c', '#f1c40f', '#e84393'];
+const FALLBACK_COLOR = '#808080';
+
+function getTakenColors() {
+    return new Set(Object.values(state.colonies).map(colony => colony.color));
+}
+
+function getAvailableColor(preferredColor = null) {
+    const takenColors = getTakenColors();
+    const normalizedPreferred = typeof preferredColor === 'string' ? preferredColor.toLowerCase() : null;
+
+    if (normalizedPreferred && COLORS.includes(normalizedPreferred) && !takenColors.has(normalizedPreferred)) {
+        return normalizedPreferred;
+    }
+
+    for (const color of COLORS) {
+        if (!takenColors.has(color)) return color;
+    }
+
+    return FALLBACK_COLOR;
+}
 
 const dist = (x1, y1, x2, y2) => { const dx = x1 - x2; const dy = y1 - y2; return Math.sqrt(dx * dx + dy * dy); };
 const clamp = (val, min, max) => Math.max(min, Math.min(max, val));
@@ -531,11 +566,20 @@ const slimAnt    = a => ({ id: a.id, colonyId: a.colonyId, type: a.type, x: Math
 const slimBeetle = b => ({ id: b.id, x: Math.round(b.x), y: Math.round(b.y), angle: Math.round(b.angle * 100)/100, hp: b.hp, attackCooldown: b.attackCooldown });
 const slimFood   = f => ({ id: f.id, x: Math.round(f.x), y: Math.round(f.y), foodType: f.foodType || 'normal' });
 const slimMeat   = m => ({ id: m.id, x: Math.round(m.x), y: Math.round(m.y) });
-const BROOD_HATCH_FRAMES = 30 * FPS;
-function getBroodStage(hatchTimer = 0) {
-    if (hatchTimer < BROOD_HATCH_FRAMES / 3) return 'egg';
-    if (hatchTimer < (BROOD_HATCH_FRAMES * 2) / 3) return 'larva';
+const BROOD_EGG_FRAMES = 10 * FPS;
+const BROOD_LARVA_FRAMES = 30 * FPS;
+const BROOD_PUPA_FRAMES = 20 * FPS;
+function getBroodStage(brood) {
+    const eggDuration = brood.eggDuration ?? BROOD_EGG_FRAMES;
+    const larvaDuration = brood.larvaDuration ?? BROOD_LARVA_FRAMES;
+    if (brood.hatchTimer < eggDuration) return 'egg';
+    if (brood.hatchTimer < eggDuration + larvaDuration) return 'larva';
     return 'pupa';
+}
+function getBroodTotalDuration(brood) {
+    return (brood.eggDuration ?? BROOD_EGG_FRAMES)
+         + (brood.larvaDuration ?? BROOD_LARVA_FRAMES)
+         + (brood.pupaDuration ?? BROOD_PUPA_FRAMES);
 }
 const slimBrood  = b => ({
     id: b.id,
@@ -544,7 +588,7 @@ const slimBrood  = b => ({
     x: Math.round(b.x),
     y: Math.round(b.y),
     hatchTimer: b.hatchTimer || 0,
-    stage: getBroodStage(b.hatchTimer || 0)
+    stage: getBroodStage(b)
 });
 const slimQueen  = q => ({ id: q.id, colonyId: q.colonyId, x: Math.round(q.x), y: Math.round(q.y), angle: Math.round(q.angle * 100)/100, hp: q.hp, food: q.food, meat: q.meat, honeyFed: q.honeyFed || 0 });
 
@@ -619,9 +663,9 @@ function spawnAphid() {
     }
 }
 
-function createColony(playerId) {
+function createColony(playerId, preferredColor = null) {
     const colId = getId();
-    state.colonies[colId] = { id: colId, color: COLORS[Object.keys(state.colonies).length % COLORS.length], command: 'forage', guardX: null, guardY: null };
+    state.colonies[colId] = { id: colId, color: getAvailableColor(preferredColor), command: 'forage', guardX: null, guardY: null };
 
     let qx, qy, valid = false;
     let spawn_attempts = 0;
@@ -668,9 +712,76 @@ function createColony(playerId) {
 }
 
 function updateGameInfo() {
-    const playersCount = Object.keys(state.players).length;
+    const playersCount = connectedSockets.size;
     if (hasGameStarted) io.emit('gameInfo', `Battle in progress! Queens remaining: ${Object.keys(state.queens).length}`);
     else io.emit('gameInfo', `Waiting for opponents... (${playersCount}/2)`);
+}
+
+function emitLobbyState() {
+    io.emit('lobbyState', {
+        takenColors: Object.values(state.colonies).map(colony => colony.color)
+    });
+}
+
+function resetMatchState() {
+    state.players = {};
+    state.colonies = {};
+    state.ants = {};
+    state.queens = {};
+    state.beetles = {};
+    state.foods = {};
+    state.meats = {};
+    state.broods = {};
+    state.aphids = {};
+    hasGameStarted = false;
+    hibernationWarningTime = null;
+    hibernationStartTime = null;
+    nextHibernationCycleStart = null;
+    updateGameInfo();
+    emitLobbyState();
+}
+
+function startHibernationCycle() {
+    const cycleLength = HIBERNATION_COOLDOWN_MIN + Math.floor(Math.random() * (HIBERNATION_COOLDOWN_MAX - HIBERNATION_COOLDOWN_MIN));
+    hibernationWarningTime = simTick + cycleLength;
+    nextHibernationCycleStart = hibernationWarningTime + HIBERNATION_WARNING_TIME;
+}
+
+function executeHibernation() {
+    const frozenAntsByColony = {};
+    
+    // Kill ants outside nest radius from queen
+    for (let id in state.ants) {
+        const ant = state.ants[id];
+        const queen = Object.values(state.queens).find(q => q.colonyId === ant.colonyId);
+        
+        if (queen) {
+            const distToQueen = dist(ant.x, ant.y, queen.x, queen.y);
+            if (distToQueen > HIBERNATION_NEST_RADIUS) {
+                frozenAntsByColony[ant.colonyId] = (frozenAntsByColony[ant.colonyId] || 0) + 1;
+                handleAntDeath(ant);
+                delete state.ants[id];
+            }
+        }
+    }
+    
+    // Clear all broods
+    state.broods = {};
+    
+    // Send hibernation results to each player
+    for (let playerId in state.players) {
+        const player = state.players[playerId];
+        const frozenCount = frozenAntsByColony[player.colonyId] || 0;
+        io.to(playerId).emit('hibernationResult', {
+            survived: true,
+            frozenCount: frozenCount
+        });
+    }
+    
+    // Reset for next cycle
+    hibernationWarningTime = null;
+    hibernationStartTime = null;
+    startHibernationCycle();
 }
 
 function checkWinCondition() {
@@ -683,18 +794,41 @@ function checkWinCondition() {
             const wp = Object.values(state.players).find(pl => pl.colonyId === winnerColonyId);
             if (wp) io.to(wp.id).emit('gameOver', 'win');
         }
-        hasGameStarted = false;
-        updateGameInfo();
+        setTimeout(resetMatchState, 100);
     }
 }
 
 io.on('connection', socket => {
-    const { colId, firstWorkerId } = createColony(socket.id);
-    state.players[socket.id] = { id: socket.id, colonyId: colId, antId: firstWorkerId, inputs: { keys: {}, mouseX: 0, mouseY: 0, clicking: false } };
-
+    connectedSockets.add(socket.id);
     socket.emit('init', socket.id);
-    if (Object.keys(state.players).length >= 2) hasGameStarted = true;
+    io.emit('playerCount', connectedSockets.size);
+    emitLobbyState();
     updateGameInfo();
+
+    socket.on('joinGame', data => {
+        if (state.players[socket.id]) return;
+
+        const preferredColor = data && typeof data.color === 'string' ? data.color : null;
+        const { colId, firstWorkerId } = createColony(socket.id, preferredColor);
+        state.players[socket.id] = {
+            id: socket.id,
+            name: data && typeof data.name === 'string' ? data.name : 'Colony',
+            colonyId: colId,
+            antId: firstWorkerId,
+            inputs: { keys: {}, mouseX: 0, mouseY: 0, clicking: false }
+        };
+        socket.data.joinedGame = true;
+        socket.data.colonyId = colId;
+
+        if (Object.keys(state.players).length >= 2) {
+            hasGameStarted = true;
+            startHibernationCycle();
+        }
+
+        io.emit('playerCount', connectedSockets.size);
+        emitLobbyState();
+        updateGameInfo();
+    });
 
     socket.on('input', data => { if (state.players[socket.id]) state.players[socket.id].inputs = data; });
     socket.on('double_click', data => {
@@ -759,6 +893,7 @@ io.on('connection', socket => {
     });
 
     socket.on('disconnect', () => {
+        connectedSockets.delete(socket.id);
         const p = state.players[socket.id];
         if (p) {
             for (let aId in state.ants)   { if (state.ants[aId].colonyId   === p.colonyId) delete state.ants[aId]; }
@@ -767,8 +902,11 @@ io.on('connection', socket => {
             delete state.colonies[p.colonyId];
             delete state.players[socket.id];
             checkWinCondition();
-            updateGameInfo();
         }
+
+        io.emit('playerCount', connectedSockets.size);
+        emitLobbyState();
+        updateGameInfo();
     });
 });
 
@@ -817,8 +955,6 @@ class AntManager {
                 if (dx !== 0 || dy !== 0) {
                     ant.angle = Math.atan2(dy, dx);
                     tx += dx; ty += dy;
-                } else if (p.inputs.clicking || p.inputs.keys.space) {
-                    ant.angle = Math.atan2(p.inputs.mouseY - ant.y, p.inputs.mouseX - ant.x);
                 }
                 if ((p.inputs.clicking || p.inputs.keys.space) && ant.attackCooldown <= 0) doAttack(ant, 50);
             }
@@ -876,7 +1012,27 @@ class AntManager {
                 ant.assistPriority = 0;
             }
 
-            if (!isAggroed && queen) {
+            // HOME COMMAND OVERRIDE: All ants go home immediately, no matter what
+            if (col.command === 'home') {
+                if (queen) {
+                    tx = queen.x;
+                    ty = queen.y;
+                    ant.aggroTarget = null;
+                    ant.aggroTimer = 0;
+                    ant.assistTarget = null;
+                    ant.assistTimer = 0;
+                    ant.targetId = null;
+                    ant.targetDict = null;
+                    ant.carryMode = false;
+                    ant.wanderX = null;
+                    ant.wanderY = null;
+                    // Soldiers and workers drop carried items at home
+                    if (ant.type !== 'super_soldier' && ant.carrying) {
+                        ant.carrying = null;
+                        ant.carriedAphidId = null;
+                    }
+                }
+            } else if (!isAggroed && queen) {
                 let currentTarget = (ant.targetId && ant.targetDict && state[ant.targetDict] && state[ant.targetDict][ant.targetId])
                     ? state[ant.targetDict][ant.targetId] : null;
 
@@ -1006,32 +1162,6 @@ class AntManager {
                         if (queen) { tx = queen.x; ty = queen.y; }
                     }
                     // If carrying aphid, the aphid handling code below will position it near queen
-                }
-                else if (col.command === 'home') {
-                    if (ant.type === 'super_soldier') {
-                        // Super soldiers patrol even in home mode
-                        if (!ant.guardPointX) {
-                            const angle = (parseInt(ant.id, 10) % 12) * (Math.PI * 2 / 12);
-                            const guardDist = 150 + (parseInt(ant.id, 10) % 50);
-                            ant.guardPointX = queen.x + Math.cos(angle) * guardDist;
-                            ant.guardPointY = queen.y + Math.sin(angle) * guardDist;
-                        }
-                        const distToGuard = dist(ant.x, ant.y, ant.guardPointX, ant.guardPointY);
-                        if (distToGuard > 20) {
-                            const dx = ant.guardPointX - ant.x;
-                            const dy = ant.guardPointY - ant.y;
-                            const len = Math.sqrt(dx * dx + dy * dy);
-                            if (len > 0.001) {
-                                tx = ant.x + (dx / len) * ant.speed;
-                                ty = ant.y + (dy / len) * ant.speed;
-                            }
-                        } else {
-                            tx = ant.guardPointX + (Math.random() * 40 - 20);
-                            ty = ant.guardPointY + (Math.random() * 40 - 20);
-                        }
-                    } else {
-                        tx = queen.x; ty = queen.y;
-                    }
                 }
                 else if (col.command === 'guard_home') {
                     if (ant.type === 'super_soldier') {
@@ -1324,6 +1454,26 @@ const centralAIUpdateSystem = new CentralizedAIUpdateSystem();
 
 setInterval(() => {
     simTick++;
+    
+    // ─── HIBERNATION CYCLE ───
+    if (hasGameStarted) {
+        if (nextHibernationCycleStart === null) {
+            startHibernationCycle();
+        }
+        
+        // 30 seconds before hibernation: send warning
+        if (hibernationWarningTime !== null && simTick === hibernationWarningTime) {
+            io.emit('hibernationWarning', {
+                timeUntilHibernation: 30
+            });
+        }
+        
+        // Execute hibernation
+        if (nextHibernationCycleStart !== null && simTick >= nextHibernationCycleStart) {
+            executeHibernation();
+        }
+    }
+    
     spawnFood();
     spawnBeetle();
     spawnAphid();
@@ -1497,7 +1647,7 @@ setInterval(() => {
         const b = state.broods[bId];
         // Initialize hatchTimer if not present (framebased counter = more efficient than age += 1/FPS)
         if (b.hatchTimer === undefined) b.hatchTimer = 0;
-        if (++b.hatchTimer >= BROOD_HATCH_FRAMES) { // 30 seconds worth of frames
+        if (++b.hatchTimer >= getBroodTotalDuration(b)) {
             const antId = getId();
             if (b.type === 'super_soldier') {
                 state.ants[antId] = {
@@ -1692,7 +1842,17 @@ function spawnBrood(queen, type) {
     const angle = Math.random() * Math.PI * 2;
     const distance = 40 + Math.random() * 25;
     const pos = getClearPositionNear(queen.x + Math.cos(angle) * distance, queen.y + Math.sin(angle) * distance, 50, ROCK_SPAWN_CLEARANCE + 20);
-    state.broods[id] = { id, colonyId: queen.colonyId, type, x: pos.x, y: pos.y, hatchTimer: 0 };
+    state.broods[id] = {
+        id,
+        colonyId: queen.colonyId,
+        type,
+        x: pos.x,
+        y: pos.y,
+        hatchTimer: 0,
+        eggDuration: BROOD_EGG_FRAMES + Math.floor(Math.random() * 10 * FPS),
+        larvaDuration: BROOD_LARVA_FRAMES + Math.floor(Math.random() * 10 * FPS),
+        pupaDuration: BROOD_PUPA_FRAMES + Math.floor(Math.random() * 10 * FPS)
+    };
 }
 
 const PORT = process.env.PORT || 3000;

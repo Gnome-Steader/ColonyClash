@@ -6,6 +6,12 @@ const gameInfoText = document.getElementById('game-info');
 const commandWheel = document.getElementById('command-wheel');
 const guardMenu = document.getElementById('guard-menu');
 
+socket.on('connect', () => {
+    const name = sessionStorage.getItem('colonyName') || 'Colony';
+    const color = sessionStorage.getItem('colonyColor') || '#3498db';
+    socket.emit('joinGame', { name, color });
+});
+
 function openCommandWheel() {
     commandWheel.style.left = mouse.x + 'px';
     commandWheel.style.top = mouse.y + 'px';
@@ -39,17 +45,25 @@ let particles = [];
 let texts =[];
 let screenShake = 0;
 let camX = 0, camY = 0;
+let hibernationWarningTimer = null;
+let hibernationResultTimer = null;
+let hibernationHideTimer = null;
+let hibernationLastFrozenCount = null;
 
 const keys = { w: false, a: false, s: false, d: false, space: false };
 const mouse = { x: 0, y: 0, worldX: 0, worldY: 0, clicking: false };
 
-const images = { queen: new Image(), worker: new Image(), soldier: new Image(), beetle: new Image(), aphid: new Image(), rock: new Image() };
+const images = { queen: new Image(), worker: new Image(), soldier: new Image(), beetle: new Image(), aphid: new Image(), rock: new Image(), hill: new Image(), egg: new Image(), larva: new Image(), pupa: new Image() };
 images.queen.src = 'Queen.png';
 images.worker.src = 'Worker.png';
 images.soldier.src = 'Soldier.png';
 images.beetle.src = 'Beetle.png';
 images.aphid.src = 'Aphid.png';
 images.rock.src = 'Rock.png';
+images.hill.src = 'Hill.png';
+images.egg.src = 'Egg.png';
+images.larva.src = 'Larva.png';
+images.pupa.src = 'Pupa.png';
 
 const spriteCache = {};
 
@@ -158,6 +172,59 @@ function spawnJuice(x, y, text, isPlayer, count = 5) {
     }
 }
 
+function hideHibernationWarning() {
+    const warningDiv = document.getElementById('hibernation-warning');
+    if (warningDiv) warningDiv.classList.remove('visible');
+}
+
+function hideHibernationResult() {
+    const resultDiv = document.getElementById('hibernation-result');
+    if (!resultDiv) return;
+
+    resultDiv.classList.remove('visible');
+    if (hibernationHideTimer) clearTimeout(hibernationHideTimer);
+    hibernationHideTimer = setTimeout(() => {
+        if (!resultDiv.classList.contains('visible')) {
+            resultDiv.style.display = 'none';
+        }
+    }, 800);
+}
+
+function showHibernationResult(frozenCount = null) {
+    const resultDiv = document.getElementById('hibernation-result');
+    if (!resultDiv) return;
+
+    if (hibernationResultTimer) clearInterval(hibernationResultTimer);
+    if (hibernationHideTimer) clearTimeout(hibernationHideTimer);
+
+    resultDiv.style.display = 'flex';
+    resultDiv.offsetHeight;
+    resultDiv.classList.add('visible');
+
+    const resultSurvived = document.getElementById('result-survived');
+    const resultDied = document.getElementById('result-died');
+    const resumeEl = document.getElementById('result-resume');
+
+    if (resultSurvived) resultSurvived.innerText = 'Your colony hibernated.';
+    if (resultDied) {
+        const countText = frozenCount === null ? 'Calculating...' : frozenCount;
+        resultDied.innerText = `Ants froze to death: ${countText}`;
+    }
+
+    let resumeCountdown = 10;
+    if (resumeEl) resumeEl.innerText = resumeCountdown;
+
+    hibernationResultTimer = setInterval(() => {
+        resumeCountdown--;
+        if (resumeEl) resumeEl.innerText = Math.max(resumeCountdown, 0);
+        if (resumeCountdown <= 0) {
+            clearInterval(hibernationResultTimer);
+            hibernationResultTimer = null;
+            hideHibernationResult();
+        }
+    }, 1000);
+}
+
 // Fixed Input Listeners & Command Wheel logic
 window.addEventListener('keydown', e => {
     if (e.key === ' ') e.preventDefault(); 
@@ -238,6 +305,45 @@ socket.on('gameOver', (result) => {
         desc.innerText = "Your Queen was slain.";
     }
 });
+    socket.on('hibernationWarning', (data) => {
+        const warningDiv = document.getElementById('hibernation-warning');
+        if (!warningDiv) return;
+        warningDiv.style.display = 'flex';
+        warningDiv.offsetHeight;
+        warningDiv.classList.add('visible');
+
+        if (hibernationWarningTimer) clearTimeout(hibernationWarningTimer);
+    
+        let countdown = data.timeUntilHibernation;
+        const countdownEl = document.getElementById('hibernation-countdown');
+        const updateCountdown = () => {
+            if (countdownEl) countdownEl.innerText = countdown;
+            if (countdown > 0) {
+                countdown--;
+                hibernationWarningTimer = setTimeout(updateCountdown, 1000);
+            } else {
+                // When countdown finishes, hide warning and show result screen
+                hideHibernationWarning();
+                showHibernationResult(hibernationLastFrozenCount);
+            }
+        };
+        updateCountdown();
+    });
+
+    socket.on('hibernationResult', (data) => {
+        hibernationLastFrozenCount = typeof data.frozenCount === 'number' ? data.frozenCount : 0;
+        const resultDied = document.getElementById('result-died');
+        if (resultDied) resultDied.innerText = `Ants froze to death: ${hibernationLastFrozenCount}`;
+
+        const resultDiv = document.getElementById('hibernation-result');
+        if (resultDiv && resultDiv.classList.contains('visible')) {
+            const resultSurvived = document.getElementById('result-survived');
+            if (resultSurvived) resultSurvived.innerText = 'Your colony hibernated.';
+            resultDiv.style.display = 'flex';
+        } else {
+            showHibernationResult(hibernationLastFrozenCount);
+        }
+    });
 
 function drawSprite(sprite, x, y, size, angle) {
     if (!sprite) return;
@@ -281,6 +387,30 @@ function drawRock(rock) {
     ctx.ellipse(-rock.radius * 0.18, -rock.radius * 0.22, rock.radius * 0.35, rock.radius * 0.2, -0.35, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
+}
+
+function drawHillOverlay(x, y, alpha, size) {
+    const sprite = images.hill;
+    if (!sprite || !sprite.complete || sprite.width === 0) return;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    drawSprite(sprite, x, y, size, 0);
+    ctx.restore();
+}
+
+function getColonyHillSize(colonyId) {
+    let capacity = 0;
+    for (let id in gameState.ants) {
+        const ant = gameState.ants[id];
+        if (!ant || ant.colonyId !== colonyId) continue;
+        if (ant.type === 'soldier') capacity += 2;
+        else if (ant.type === 'super_soldier') capacity += 6;
+        else capacity += 1;
+    }
+    const baseSize = 100;
+    const extra = Math.sqrt(capacity) * 10;
+    return baseSize + extra;
 }
 
 function drawRoundedRect(x, y, width, height, radius) {
@@ -397,24 +527,30 @@ function draw() {
     for (let id in gameState.broods) {
         let b = gameState.broods[id];
         if (!isVisible(b.x, b.y)) continue;
-        const colonyColor = gameState.colonies[b.colonyId].color;
-        ctx.fillStyle = colonyColor;
         const stage = b.stage || 'egg';
-        if (stage === 'egg') {
-            ctx.beginPath();
-            ctx.arc(b.x, b.y, 5, 0, Math.PI * 2);
-            ctx.fill();
-        } else if (stage === 'larva') {
-            ctx.beginPath();
-            ctx.ellipse(b.x, b.y, 9, 5, 0.2, 0, Math.PI * 2);
-            ctx.fill();
+        const broodSize = 25 * 0.75;
+        const sprite = getClearSprite(stage);
+        if (sprite) {
+            drawSprite(sprite, b.x, b.y, broodSize, 0);
         } else {
-            drawRoundedRect(b.x - 8, b.y - 6, 16, 12, 4);
-            ctx.fill();
+            const colonyColor = gameState.colonies[b.colonyId].color;
+            ctx.fillStyle = colonyColor;
+            if (stage === 'egg') {
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, broodSize * 0.25, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (stage === 'larva') {
+                ctx.beginPath();
+                ctx.ellipse(b.x, b.y, broodSize * 0.35, broodSize * 0.2, 0.2, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                drawRoundedRect(b.x - broodSize * 0.35, b.y - broodSize * 0.25, broodSize * 0.7, broodSize * 0.5, broodSize * 0.2);
+                ctx.fill();
+            }
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
         }
-        ctx.strokeStyle = 'white';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
     }
 
     for (let id in gameState.queens) {
@@ -476,6 +612,23 @@ function draw() {
             const barW = a.type === 'super_soldier' ? 60 : 20;
             ctx.fillStyle = 'red'; ctx.fillRect(a.x - barW/2, a.y - 20, barW * (a.hp / maxHp), 3);
         }
+    }
+
+    const myAnt = me && me.antId && gameState.ants[me.antId] ? gameState.ants[me.antId] : null;
+    for (let id in gameState.queens) {
+        const queen = gameState.queens[id];
+        if (!isVisible(queen.x, queen.y)) continue;
+
+        let hillAlpha = 1;
+        if (myAnt) {
+            const revealDistance = 220;
+            const fadeDistance = 90;
+            const distance = Math.hypot(myAnt.x - queen.x, myAnt.y - queen.y);
+            hillAlpha = Math.max(0, Math.min(1, (distance - fadeDistance) / (revealDistance - fadeDistance)));
+        }
+
+        const hillSize = getColonyHillSize(queen.colonyId);
+        drawHillOverlay(queen.x, queen.y, hillAlpha, hillSize);
     }
 
     ctx.restore();

@@ -12,3 +12,62 @@
     transition: transform 0.2s;
 }
 #game-over-screen button:hover { transform: scale(1.1); }
+
+#hibernation-warning,
+#hibernation-result {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    text-align: center;
+    z-index: 1002;
+}
+
+#hibernation-warning {
+    background: rgba(0, 0, 0, 0.88);
+    color: white;
+    opacity: 0;
+    transition: opacity 0.6s ease;
+}
+
+#hibernation-warning.visible {
+    opacity: 1;
+}
+
+#hibernation-countdown {
+    font-size: 90px;
+    font-weight: 900;
+    line-height: 1;
+    color: #f1c40f;
+    text-shadow: 4px 4px 0 #000;
+}
+
+#hibernation-sub {
+    margin-top: 10px;
+    color: #ddd;
+}
+
+#hibernation-result {
+    background: rgba(0, 0, 0, 0.98);
+    color: white;
+    opacity: 0;
+    transition: opacity 0.8s ease;
+    z-index: 1003;
+}
+
+#hibernation-result.visible {
+    opacity: 1;
+}
+
+#hibernation-result h2 {
+    font-size: 58px;
+    margin: 0 0 16px 0;
+    text-shadow: 4px 4px 0 #000;
+}
+
+#hibernation-result p {
+    font-size: 24px;
+    margin: 4px 0;
+}

@@ -3,81 +3,615 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Colony Clash</title>
+    <title>Colony Clash — Lobby</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300&display=swap" rel="stylesheet">
     <style>
-        /* Guarantees absolute Fullscreen with no scrollbars */
-        body, html { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; background-color: #043a05; font-family: Arial, sans-serif; }
-        canvas { display: block; width: 100%; height: 100%; }
-        
-        #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; background: rgba(0, 0, 0, 0.5); padding: 15px; border-radius: 8px; color: white; z-index: 10; }
-        #ui h1 { margin: 0 0 10px 0; font-size: 24px; }
-        #ui p { margin: 5px 0; font-size: 14px; }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        #lobby-banner { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); padding: 10px 30px; border-radius: 10px; border: 2px solid #f1c40f; text-align: center; pointer-events: none; z-index: 50; }
-        
-        /* Command Wheel styles */
-        #command-wheel {
-            position: absolute; width: 200px; height: 200px; margin-left: -100px; margin-top: -100px;
-            border-radius: 50%; background: rgba(0, 0, 0, 0.6); pointer-events: auto; z-index: 100;
+        :root {
+            --soil-dark: #1a0f06;
+            --soil-mid: #2d1a0a;
+            --soil-light: #4a2c10;
+            --tunnel-glow: #c8860a;
+            --gold: #e8a020;
+            --gold-bright: #f5c842;
+            --leaf-green: #2d6b1a;
+            --leaf-bright: #4a9e2a;
+            --ant-red: #b03010;
+            --cream: #f0e8d0;
+            --parchment: #d4c4a0;
+            --text-dim: #a09070;
         }
-        .wheel-btn {
-            position: absolute; top: 50%; left: 50%; width: 60px; height: 30px; margin-top: -15px; margin-left: -30px;
-            background: #e74c3c; color: white; text-align: center; line-height: 30px; border-radius: 15px;
-            cursor: pointer; font-size: 12px; font-weight: bold; user-select: none; transition: background 0.2s, transform 0.2s;
+
+
+        html, body {
+            width: 100%;
+            min-height: 100vh;
+            background: var(--soil-dark);
+            font-family: 'Crimson Pro', serif;
+            color: var(--cream);
+            overflow-x: hidden;
+            overflow-y: auto;
         }
-        .wheel-btn:hover { background: #f1c40f; color: black; }
-        #guard-menu {
-            position: absolute; width: 220px; height: 160px; margin-left: -110px; margin-top: -80px;
-            border-radius: 18px; background: rgba(0, 0, 0, 0.72); pointer-events: auto; z-index: 110;
-            padding: 14px 12px; box-sizing: border-box; border: 1px solid rgba(255,255,255,0.08);
+
+        /* === ANIMATED BACKGROUND === */
+        .bg-layer {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
         }
-        .guard-btn {
-            width: 100%; height: 34px; margin: 8px 0; border: none; border-radius: 10px;
-            background: #e74c3c; color: white; cursor: pointer; font-size: 13px; font-weight: bold;
-            transition: background 0.2s, transform 0.2s;
+
+        /* Surface grass */
+        .surface {
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 38%;
+            background: linear-gradient(180deg,
+                #0a2e05 0%,
+                #0d3a07 30%,
+                #1a5210 60%,
+                #1e4a0e 100%
+            );
+            overflow: hidden;
         }
-        .guard-btn:hover { background: #f1c40f; color: black; }
+
+        .surface::after {
+            content: '';
+            position: absolute;
+            bottom: 0; left: 0; right: 0;
+            height: 60px;
+            background: linear-gradient(180deg, transparent, #1e0e05 100%);
+        }
+
+        /* Soil underground */
+        .underground {
+            position: absolute;
+            bottom: 0; left: 0; right: 0;
+            height: 65%;
+            background: radial-gradient(ellipse at 50% 30%, #3a1e08 0%, #2a1205 40%, #180a02 100%);
+        }
+
+        /* Tunnel network */
+        .tunnel-svg {
+            position: absolute;
+            inset: 0;
+            width: 100%; height: 100%;
+            opacity: 0.35;
+        }
+
+        /* Grass blades */
+        .grass-container {
+            position: absolute;
+            bottom: 0; left: 0; right: 0;
+            height: 80px;
+        }
+
+        .blade {
+            position: absolute;
+            bottom: 0;
+            width: 3px;
+            transform-origin: bottom center;
+            border-radius: 2px 2px 0 0;
+            animation: sway 3s ease-in-out infinite;
+        }
+
+        @keyframes sway {
+            0%, 100% { transform: rotate(-3deg); }
+            50% { transform: rotate(3deg); }
+        }
+
+        /* Dirt particles floating */
+        .particle {
+            position: absolute;
+            border-radius: 50%;
+            background: var(--soil-light);
+            opacity: 0;
+            animation: floatUp 8s ease-in infinite;
+        }
+
+        @keyframes floatUp {
+            0% { opacity: 0; transform: translateY(0) scale(1); }
+            10% { opacity: 0.6; }
+            90% { opacity: 0.2; }
+            100% { opacity: 0; transform: translateY(-200px) scale(0.3); }
+        }
+
+        /* Ants walking across */
+        .ant-walker {
+            position: absolute;
+            width: 20px; height: 10px;
+            animation: walkAcross 18s linear infinite;
+            opacity: 0.7;
+        }
+
+        @keyframes walkAcross {
+            0% { left: -40px; }
+            100% { left: calc(100% + 40px); }
+        }
+
+        .ant-walker::before,
+        .ant-walker::after {
+            content: '';
+            position: absolute;
+            background: #1a0a02;
+            border-radius: 50%;
+        }
+        .ant-walker::before { width: 8px; height: 6px; top: 2px; left: 0; }
+        .ant-walker::after  { width: 6px; height: 5px; top: 3px; left: 7px; }
+
+        /* === MAIN CONTENT === */
+        .lobby-wrap {
+            position: relative;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            gap: 0;
+        }
+
+        /* Title block */
+        .title-block {
+            text-align: center;
+            margin-bottom: 48px;
+            animation: riseIn 1.2s cubic-bezier(.22,1,.36,1) both;
+        }
+
+        @keyframes riseIn {
+            from { opacity: 0; transform: translateY(40px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .title-eyebrow {
+            font-family: 'Crimson Pro', serif;
+            font-size: 13px;
+            letter-spacing: 0.4em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            margin-bottom: 12px;
+        }
+
+        .title-main {
+            font-family: 'Cinzel Decorative', cursive;
+            font-size: clamp(52px, 8vw, 96px);
+            font-weight: 900;
+            line-height: 0.95;
+            background: linear-gradient(180deg, var(--gold-bright) 0%, var(--gold) 45%, #a06010 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-shadow: none;
+            filter: drop-shadow(0 4px 24px rgba(200,134,10,0.5));
+        }
+
+        .title-sub {
+            font-family: 'Crimson Pro', serif;
+            font-style: italic;
+            font-size: 20px;
+            color: var(--parchment);
+            margin-top: 14px;
+            opacity: 0.8;
+        }
+
+        /* Card */
+        .lobby-card {
+            background: linear-gradient(160deg, rgba(42,20,8,0.95) 0%, rgba(26,12,4,0.98) 100%);
+            border: 1px solid rgba(200,134,10,0.3);
+            border-radius: 4px;
+            padding: 44px 52px;
+            width: min(520px, 90vw);
+            box-shadow: 0 0 0 1px rgba(200,134,10,0.08), 0 32px 80px rgba(0,0,0,0.7), inset 0 1px 0 rgba(245,200,66,0.12);
+            animation: riseIn 1.2s 0.2s cubic-bezier(.22,1,.36,1) both;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .lobby-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--gold), transparent);
+            opacity: 0.6;
+        }
+
+        /* Name field */
+        .field-label {
+            font-family: 'Crimson Pro', serif;
+            font-size: 12px;
+            letter-spacing: 0.3em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            margin-bottom: 10px;
+            display: block;
+        }
+
+        .name-input {
+            width: 100%;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(200,134,10,0.3);
+            border-radius: 3px;
+            padding: 14px 18px;
+            font-family: 'Cinzel Decorative', cursive;
+            font-size: 16px;
+            color: var(--gold-bright);
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            letter-spacing: 0.05em;
+        }
+
+        .name-input::placeholder { color: rgba(200,160,80,0.3); font-size: 13px; }
+        .name-input:focus {
+            border-color: rgba(200,134,10,0.7);
+            box-shadow: 0 0 0 3px rgba(200,134,10,0.12);
+        }
+
+        /* Divider */
+        .divider {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin: 28px 0;
+        }
+        .divider::before, .divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(200,134,10,0.3));
+        }
+        .divider::after { background: linear-gradient(90deg, rgba(200,134,10,0.3), transparent); }
+        .divider-icon { font-size: 18px; opacity: 0.6; }
+
+        /* Colony color picker */
+        .color-row {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-bottom: 32px;
+        }
+
+        .color-swatch {
+            width: 36px; height: 36px;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 3px solid transparent;
+            transition: transform 0.15s, border-color 0.15s;
+            position: relative;
+        }
+
+        .color-swatch:hover { transform: scale(1.15); }
+        .color-swatch.unavailable {
+            cursor: not-allowed;
+            opacity: 0.35;
+            filter: grayscale(1);
+            background: #777 !important;
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);
+        }
+        .color-swatch.unavailable:hover { transform: none; }
+        .color-swatch.selected {
+            border-color: var(--gold-bright);
+            transform: scale(1.2);
+            box-shadow: 0 0 12px rgba(245,200,66,0.5);
+        }
+
+        /* Play button */
+        .btn-play {
+            width: 100%;
+            padding: 18px;
+            background: linear-gradient(160deg, #b06010 0%, #7a3a08 100%);
+            border: 1px solid rgba(200,134,10,0.5);
+            border-radius: 3px;
+            color: var(--gold-bright);
+            font-family: 'Cinzel Decorative', cursive;
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+            overflow: hidden;
+            text-transform: uppercase;
+        }
+
+        .btn-play::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(160deg, rgba(245,200,66,0.18), transparent);
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .btn-play:hover {
+            border-color: var(--gold-bright);
+            box-shadow: 0 0 30px rgba(200,134,10,0.4), 0 8px 20px rgba(0,0,0,0.4);
+            transform: translateY(-2px);
+        }
+        .btn-play:hover::after { opacity: 1; }
+        .btn-play:active { transform: translateY(0); }
+
+        /* How-to-play */
+        .how-to {
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid rgba(200,134,10,0.15);
+        }
+
+        .how-to-title {
+            font-size: 11px;
+            letter-spacing: 0.3em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            text-align: center;
+            margin-bottom: 14px;
+        }
+
+        .tips-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .tip {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-dim);
+            line-height: 1.4;
+        }
+
+        .tip-icon {
+            font-size: 14px;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+
+        /* Player count */
+        .player-count {
+            position: fixed;
+            top: 24px;
+            right: 24px;
+            background: rgba(26,12,4,0.9);
+            border: 1px solid rgba(200,134,10,0.3);
+            border-radius: 3px;
+            padding: 10px 18px;
+            font-size: 13px;
+            color: var(--text-dim);
+            z-index: 20;
+        }
+
+        .player-count strong { color: var(--gold); }
+
+        /* Footer */
+        .lobby-footer {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 12px;
+            color: rgba(160,144,112,0.4);
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            z-index: 20;
+            white-space: nowrap;
+        }
+
+        /* Glow tunnel entrance */
+        .tunnel-entrance {
+            position: fixed;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 200px;
+            height: 100px;
+            background: radial-gradient(ellipse at 50% 100%, rgba(200,134,10,0.2) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 5;
+            animation: tunnelPulse 3s ease-in-out infinite;
+        }
+
+        @keyframes tunnelPulse {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+
+        /* Grass blades animated */
+        @keyframes bladeWave {
+            0%, 100% { transform: skewX(-4deg) rotate(-2deg); }
+            50% { transform: skewX(4deg) rotate(2deg); }
+        }
     </style>
 </head>
 <body>
-    <div id="ui">
-        <h1>Colony Clash</h1>
-        <p>WASD to move | Mouse/Space to attack</p>
-        <p>Hold <b>'C'</b> to open Command Wheel</p>
-        <p id="status">Command: Waiting...</p>
+
+<!-- Background layers -->
+<div class="bg-layer">
+    <div class="surface">
+        <div class="grass-container" id="grassContainer"></div>
+    </div>
+    <div class="underground">
+        <!-- Tunnel network SVG -->
+        <svg class="tunnel-svg" viewBox="0 0 1200 600" preserveAspectRatio="xMidYMid slice">
+            <g stroke="#c8860a" stroke-width="8" fill="none" stroke-linecap="round">
+                <path d="M 600 0 Q 580 80 540 120 Q 480 180 440 260 Q 400 340 380 440"/>
+                <path d="M 600 0 Q 620 90 660 130 Q 720 200 740 290 Q 760 380 800 460"/>
+                <path d="M 540 120 Q 460 140 380 120 Q 300 100 220 160"/>
+                <path d="M 660 130 Q 740 150 820 130 Q 900 110 980 170"/>
+                <path d="M 440 260 Q 360 280 280 260 Q 200 240 160 300"/>
+                <path d="M 740 290 Q 820 310 900 290 Q 980 270 1040 330"/>
+                <path d="M 380 440 Q 300 460 240 440"/>
+                <path d="M 800 460 Q 880 480 940 460"/>
+            </g>
+            <!-- Chamber circles -->
+            <g fill="rgba(200,134,10,0.15)" stroke="rgba(200,134,10,0.3)" stroke-width="3">
+                <ellipse cx="600" cy="30" rx="55" ry="30"/>
+                <ellipse cx="380" cy="440" rx="70" ry="42"/>
+                <ellipse cx="800" cy="460" rx="65" ry="38"/>
+                <ellipse cx="220" cy="160" rx="50" ry="30"/>
+                <ellipse cx="980" cy="170" rx="50" ry="30"/>
+            </g>
+        </svg>
+    </div>
+    <div id="particleContainer"></div>
+    <div class="tunnel-entrance"></div>
+</div>
+
+<!-- Lobby UI -->
+<div class="lobby-wrap">
+    <div class="title-block">
+        <div class="title-eyebrow">Multiplayer Ant Strategy</div>
+        <div class="title-main">Colony Clash</div>
+        <div class="title-sub">Forage. Build. Conquer.</div>
     </div>
 
-    <!-- Centered Lobby Banner -->
-    <div id="lobby-banner">
-        <h2 id="game-info" style="margin: 0; color: #f1c40f; font-size: 24px;">Waiting for opponents... (1/2)</h2>
-        <p style="margin: 5px 0 0 0; font-size: 14px; color: white;">Tip: Hunt beetles to build your army before the match begins!</p>
+    <div class="lobby-card">
+        <label class="field-label" for="playerName">Colony Name</label>
+        <input class="name-input" id="playerName" type="text" maxlength="20" placeholder="Enter your colony name…" autocomplete="off" spellcheck="false">
+
+        <div class="divider"><span class="divider-icon">⬡</span></div>
+
+        <label class="field-label">Choose Colony Color</label>
+        <div class="color-row" id="colorPicker">
+            <div class="color-swatch selected" data-color="#3498db" style="background:#3498db"></div>
+            <div class="color-swatch" data-color="#9b59b6" style="background:#9b59b6"></div>
+            <div class="color-swatch" data-color="#e67e22" style="background:#e67e22"></div>
+            <div class="color-swatch" data-color="#1abc9c" style="background:#1abc9c"></div>
+            <div class="color-swatch" data-color="#f1c40f" style="background:#f1c40f"></div>
+            <div class="color-swatch" data-color="#e84393" style="background:#e84393"></div>
+        </div>
+
+        <button class="btn-play" id="playBtn" onclick="startGame()">Enter the Colony</button>
+
+        <div class="how-to">
+            <div class="how-to-title">How to Play</div>
+            <div class="tips-grid">
+                <div class="tip"><span class="tip-icon">🐜</span><span>WASD to move, Space/Click to attack</span></div>
+                <div class="tip"><span class="tip-icon">🌿</span><span>Forage food to grow your colony</span></div>
+                <div class="tip"><span class="tip-icon">❄️</span><span>Get underground before hibernation!</span></div>
+                <div class="tip"><span class="tip-icon">🪲</span><span>Kill beetles for meat to spawn soldiers</span></div>
+                <div class="tip"><span class="tip-icon">⚔️</span><span>Hold C for colony commands</span></div>
+            </div>
+        </div>
     </div>
+</div>
 
-    <!-- Win/Loss Screen -->
-    <div id="game-over-screen" style="display: none; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.85); flex-direction: column; align-items: center; justify-content: center; z-index: 1000;">
-        <h1 id="game-over-title" style="font-size: 80px; margin: 0; text-transform: uppercase; text-shadow: 4px 4px 0px #000;">GAME OVER</h1>
-        <p id="game-over-desc" style="font-size: 28px; color: white;">You Lose.</p>
-        <button onclick="location.reload()" style="padding: 15px 30px; font-size: 20px; font-weight: bold; margin-top: 30px; cursor: pointer; background: white; color: black; border: none; border-radius: 8px;">Play Again</button>
-    </div>
+<div class="player-count" id="playerCount">
+    Players Online: <strong id="onlineCount">—</strong>
+</div>
 
-    <!-- Command Wheel -->
-    <div id="command-wheel" style="display: none;">
-        <div class="wheel-btn" data-cmd="attack" style="transform: rotate(-90deg) translate(80px) rotate(90deg);">Attack</div>
-        <div class="wheel-btn" data-cmd="guard_menu" style="transform: rotate(-18deg) translate(80px) rotate(18deg);">Guard</div>
-        <div class="wheel-btn" data-cmd="forage" style="transform: rotate(54deg) translate(80px) rotate(-54deg);">Forage</div>
-        <div class="wheel-btn" data-cmd="home" style="transform: rotate(126deg) translate(80px) rotate(-126deg);">Home</div>
-        <div class="wheel-btn" data-cmd="follow" style="transform: rotate(198deg) translate(80px) rotate(-198deg);">Follow</div>
-    </div>
+<div class="lobby-footer">Colony Clash v2.0 · 2-Player Strategy</div>
 
-    <div id="guard-menu" style="display: none;">
-        <button class="guard-btn" data-cmd="guard_area">Guard Area</button>
-        <button class="guard-btn" data-cmd="guard_home">Guard Home</button>
-        <button class="guard-btn" data-cmd="back">Back</button>
-    </div>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+    // === Grass generation ===
+    const grassContainer = document.getElementById('grassContainer');
+    for (let i = 0; i < 120; i++) {
+        const blade = document.createElement('div');
+        blade.className = 'blade';
+        const h = 20 + Math.random() * 50;
+        const hue = 100 + Math.random() * 40;
+        const lightness = 20 + Math.random() * 25;
+        blade.style.cssText = `
+            left: ${Math.random() * 100}%;
+            height: ${h}px;
+            background: hsl(${hue},60%,${lightness}%);
+            animation-delay: ${Math.random() * 3}s;
+            animation-duration: ${2 + Math.random() * 2}s;
+            width: ${2 + Math.random() * 3}px;
+        `;
+        grassContainer.appendChild(blade);
+    }
 
-    <canvas id="gameCanvas"></canvas>
+    // === Dirt particles ===
+    const pc = document.getElementById('particleContainer');
+    for (let i = 0; i < 20; i++) {
+        const p = document.createElement('div');
+        p.className = 'particle';
+        const size = 2 + Math.random() * 5;
+        p.style.cssText = `
+            width: ${size}px; height: ${size}px;
+            left: ${Math.random() * 100}%;
+            bottom: ${Math.random() * 40}%;
+            animation-delay: ${Math.random() * 8}s;
+            animation-duration: ${6 + Math.random() * 6}s;
+        `;
+        pc.appendChild(p);
+    }
 
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="client.js"></script>
+    // === Color picker ===
+    const colorPicker = document.getElementById('colorPicker');
+    const colorSwatches = Array.from(document.querySelectorAll('.color-swatch'));
+    let selectedColor = (sessionStorage.getItem('colonyColor') || '#3498db').toLowerCase();
+
+    function syncColorPicker(takenColors = []) {
+        const taken = new Set(takenColors.map(color => String(color).toLowerCase()));
+        let firstAvailable = null;
+        let selectedSwatch = null;
+
+        colorSwatches.forEach(swatch => {
+            const swatchColor = swatch.dataset.color.toLowerCase();
+            const unavailable = taken.has(swatchColor);
+            swatch.classList.toggle('unavailable', unavailable);
+
+            if (!unavailable && !firstAvailable) firstAvailable = swatch;
+            if (swatchColor === selectedColor) selectedSwatch = swatch;
+        });
+
+        const nextSelection = selectedSwatch && !selectedSwatch.classList.contains('unavailable')
+            ? selectedSwatch
+            : (firstAvailable || colorSwatches[0]);
+
+        if (nextSelection) {
+            colorSwatches.forEach(swatch => swatch.classList.remove('selected'));
+            nextSelection.classList.add('selected');
+            selectedColor = nextSelection.dataset.color.toLowerCase();
+            sessionStorage.setItem('colonyColor', selectedColor);
+        }
+    }
+
+    colorPicker.addEventListener('click', e => {
+        const sw = e.target.closest('.color-swatch');
+        if (!sw || sw.classList.contains('unavailable')) return;
+        document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('selected'));
+        sw.classList.add('selected');
+        selectedColor = sw.dataset.color.toLowerCase();
+        sessionStorage.setItem('colonyColor', selectedColor);
+    });
+
+
+    // === Socket for player count ===
+    const socket = io();
+    socket.on('playerCount', count => {
+        const onlineCount = document.getElementById('onlineCount');
+        if (onlineCount) onlineCount.textContent = count;
+    });
+
+    socket.on('lobbyState', state => {
+        syncColorPicker(state && state.takenColors ? state.takenColors : []);
+    });
+
+    syncColorPicker();
+
+    // === Start game ===
+    function startGame() {
+        const name = document.getElementById('playerName').value.trim() || 'Colony';
+        const btn = document.getElementById('playBtn');
+        btn.textContent = 'spawning colony...';
+        btn.style.opacity = '0.7';
+        btn.disabled = true;
+
+        // Store lobby choices and redirect to game
+        sessionStorage.setItem('colonyName', name);
+        sessionStorage.setItem('colonyColor', selectedColor);
+        window.location.href = '/game.html';
+    }
+
+    document.getElementById('playerName').addEventListener('keydown', e => {
+        if (e.key === 'Enter') startGame();
+    });
+</script>
 </body>
 </html>
