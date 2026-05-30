@@ -33,6 +33,7 @@ socket.on('connect', () => {
     const name = sessionStorage.getItem('colonyName') || 'Colony';
     const color = sessionStorage.getItem('colonyColor') || '#3498db';
     socket.emit('joinGame', { name, color });
+    window.cgCall('game', 'gameplayStart');
 });
 
 function openCommandWheel() {
@@ -232,7 +233,10 @@ function prewarmSprites() {
     });
 }
 
-window.addEventListener('load', prewarmSprites);
+window.addEventListener('load', () => {
+    prewarmSprites();
+    window.cgCall('game', 'sdkGameLoadingStop');
+});
 
 class Particle {
     constructor(x, y, color) {
@@ -541,6 +545,7 @@ socket.on('state', state => {
 });
 
 socket.on('gameOver', (result) => {
+    window.cgCall('game', 'gameplayStop');
     const screen = document.getElementById('game-over-screen');
     const title = document.getElementById('game-over-title');
     const desc = document.getElementById('game-over-desc');

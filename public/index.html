@@ -424,6 +424,9 @@
             50% { transform: skewX(4deg) rotate(2deg); }
         }
     </style>
+    <!-- CrazyGames SDK -->
+    <script src="crazygames.js"></script>
+    <script>window.cgCall('game', 'sdkGameLoadingStart');</script>
 </head>
 <body>
 
@@ -646,6 +649,10 @@
 
     document.getElementById('playerName').addEventListener('keydown', e => {
         if (e.key === 'Enter') startGame();
+    });
+
+    window.addEventListener('load', () => {
+        window.cgCall('game', 'sdkGameLoadingStop');
     });
 </script>
 </body>
