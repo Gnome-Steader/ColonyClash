@@ -483,6 +483,12 @@
             <div class="color-swatch" data-color="#e84393" style="background:#e84393"></div>
         </div>
 
+        <div style="margin: 14px 0 2px; padding: 10px 12px; border-radius: 12px; background: rgba(0,0,0,0.18); border: 1px solid rgba(232,160,32,0.25); color: var(--cream); font-size: 14px;">
+            Room <strong id="roomCode">—</strong>
+            <div style="margin-top: 6px; color: var(--text-dim); font-size: 12px; word-break: break-all;" id="roomInviteLink"></div>
+            <button type="button" id="copyRoomBtn" style="margin-top: 8px; padding: 8px 12px; border: 0; border-radius: 999px; background: linear-gradient(135deg, var(--gold), var(--gold-bright)); color: #1a0f06; font-weight: 700; cursor: pointer;">Copy Invite Link</button>
+        </div>
+
         <button class="btn-play" id="playBtn" onclick="startGame()">Enter the Colony</button>
 
         <div class="how-to">
@@ -506,6 +512,34 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
+    const lobbyUrl = new URL(window.location.href);
+    let roomId = lobbyUrl.searchParams.get('room') || sessionStorage.getItem('colonyRoom');
+    if (!roomId) {
+        roomId = Math.random().toString(36).slice(2, 8).toUpperCase();
+        lobbyUrl.searchParams.set('room', roomId);
+        window.history.replaceState({}, '', lobbyUrl.toString());
+    }
+    sessionStorage.setItem('colonyRoom', roomId);
+
+    const roomCode = document.getElementById('roomCode');
+    const roomInviteLink = document.getElementById('roomInviteLink');
+    const copyRoomBtn = document.getElementById('copyRoomBtn');
+    const inviteUrl = `${window.location.origin}/?room=${encodeURIComponent(roomId)}`;
+    if (roomCode) roomCode.textContent = roomId;
+    if (roomInviteLink) roomInviteLink.textContent = inviteUrl;
+    if (copyRoomBtn) {
+        copyRoomBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(inviteUrl);
+                copyRoomBtn.textContent = 'Invite Copied';
+                setTimeout(() => { copyRoomBtn.textContent = 'Copy Invite Link'; }, 1500);
+            } catch (err) {
+                copyRoomBtn.textContent = 'Copy Failed';
+                setTimeout(() => { copyRoomBtn.textContent = 'Copy Invite Link'; }, 1500);
+            }
+        });
+    }
+
     // === Grass generation ===
     const grassContainer = document.getElementById('grassContainer');
     for (let i = 0; i < 120; i++) {
@@ -583,7 +617,7 @@
 
 
     // === Socket for player count ===
-    const socket = io();
+    const socket = io({ query: { room: roomId } });
     socket.on('playerCount', count => {
         const onlineCount = document.getElementById('onlineCount');
         if (onlineCount) onlineCount.textContent = count;
@@ -606,7 +640,8 @@
         // Store lobby choices and redirect to game
         sessionStorage.setItem('colonyName', name);
         sessionStorage.setItem('colonyColor', selectedColor);
-        window.location.href = '/game.html';
+        sessionStorage.setItem('colonyRoom', roomId);
+        window.location.href = `/game.html?room=${encodeURIComponent(roomId)}`;
     }
 
     document.getElementById('playerName').addEventListener('keydown', e => {

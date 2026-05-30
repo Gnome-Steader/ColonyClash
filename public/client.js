@@ -1,10 +1,31 @@
-const socket = io();
+function getRoomId() {
+    const url = new URL(window.location.href);
+    const queryRoom = url.searchParams.get('room');
+    const storedRoom = sessionStorage.getItem('colonyRoom');
+    const room = (queryRoom || storedRoom || 'default').trim() || 'default';
+    sessionStorage.setItem('colonyRoom', room);
+    return room;
+}
+
+const roomId = getRoomId();
+const socket = io({ query: { room: roomId } });
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const statusText = document.getElementById('status');
 const gameInfoText = document.getElementById('game-info');
 const commandWheel = document.getElementById('command-wheel');
 const guardMenu = document.getElementById('guard-menu');
+const mobileControls = document.getElementById('mobile-controls');
+const joystick = document.getElementById('mobile-joystick');
+const joystickKnob = document.getElementById('mobile-joystick-knob');
+const attackButton = document.getElementById('mobile-attack');
+const commandButton = document.getElementById('mobile-commands');
+
+const isTouchDevice = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+
+if (isTouchDevice && document.body) {
+    document.body.classList.add('touch-device');
+}
 
 socket.on('connect', () => {
     const name = sessionStorage.getItem('colonyName') || 'Colony';
@@ -50,8 +71,101 @@ let hibernationResultTimer = null;
 let hibernationHideTimer = null;
 let hibernationLastFrozenCount = null;
 
+const keyboardKeys = { w: false, a: false, s: false, d: false, space: false };
+const touchKeys = { w: false, a: false, s: false, d: false, space: false };
 const keys = { w: false, a: false, s: false, d: false, space: false };
 const mouse = { x: 0, y: 0, worldX: 0, worldY: 0, clicking: false };
+const touchMoveTarget = { active: false, x: 0, y: 0 };
+const joystickState = { active: false, pointerId: null, baseX: 0, baseY: 0, x: 0, y: 0, maxRadius: 56 };
+
+function syncKeys() {
+    keys.w = keyboardKeys.w || touchKeys.w;
+    keys.a = keyboardKeys.a || touchKeys.a;
+    keys.s = keyboardKeys.s || touchKeys.s;
+    keys.d = keyboardKeys.d || touchKeys.d;
+    keys.space = keyboardKeys.space || touchKeys.space;
+}
+
+function updateJoystickVector(clientX, clientY) {
+    const dx = clientX - joystickState.baseX;
+    const dy = clientY - joystickState.baseY;
+    const distance = Math.hypot(dx, dy);
+    const clampedDistance = Math.min(distance, joystickState.maxRadius);
+    const angle = Math.atan2(dy, dx);
+    const knobX = joystickState.baseX + Math.cos(angle) * clampedDistance;
+    const knobY = joystickState.baseY + Math.sin(angle) * clampedDistance;
+
+    joystickState.x = knobX;
+    joystickState.y = knobY;
+    if (joystickKnob) {
+        joystickKnob.style.transform = `translate(${knobX - joystickState.baseX}px, ${knobY - joystickState.baseY}px)`;
+    }
+
+    const deadZone = 12;
+    if (distance < deadZone) {
+        touchKeys.w = false;
+        touchKeys.a = false;
+        touchKeys.s = false;
+        touchKeys.d = false;
+    } else {
+        const normalizedX = dx / Math.max(distance, 0.001);
+        const normalizedY = dy / Math.max(distance, 0.001);
+        touchKeys.w = normalizedY < -0.35;
+        touchKeys.s = normalizedY > 0.35;
+        touchKeys.a = normalizedX < -0.35;
+        touchKeys.d = normalizedX > 0.35;
+    }
+
+    syncKeys();
+}
+
+function resetJoystick() {
+    joystickState.active = false;
+    joystickState.pointerId = null;
+    touchKeys.w = false;
+    touchKeys.a = false;
+    touchKeys.s = false;
+    touchKeys.d = false;
+    syncKeys();
+    if (joystickKnob) {
+        joystickKnob.style.transform = 'translate(0px, 0px)';
+    }
+}
+
+function setTouchMoveTarget(clientX, clientY) {
+    touchMoveTarget.active = true;
+    touchMoveTarget.x = clientX + camX;
+    touchMoveTarget.y = clientY + camY;
+}
+
+function clearTouchMoveTarget() {
+    touchMoveTarget.active = false;
+}
+
+function updateTouchMovementTarget(myAnt) {
+    if (!touchMoveTarget.active || !myAnt || joystickState.active) return;
+
+    const dx = touchMoveTarget.x - myAnt.x;
+    const dy = touchMoveTarget.y - myAnt.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance < 28) {
+        clearTouchMoveTarget();
+        touchKeys.w = false;
+        touchKeys.a = false;
+        touchKeys.s = false;
+        touchKeys.d = false;
+        syncKeys();
+        return;
+    }
+
+    const normalizedX = dx / Math.max(distance, 0.001);
+    const normalizedY = dy / Math.max(distance, 0.001);
+    touchKeys.w = normalizedY < -0.22;
+    touchKeys.s = normalizedY > 0.22;
+    touchKeys.a = normalizedX < -0.22;
+    touchKeys.d = normalizedX > 0.22;
+    syncKeys();
+}
 
 const images = { queen: new Image(), worker: new Image(), soldier: new Image(), beetle: new Image(), aphid: new Image(), rock: new Image(), hill: new Image(), egg: new Image(), larva: new Image(), pupa: new Image() };
 images.queen.src = 'Queen.png';
@@ -67,57 +181,56 @@ images.pupa.src = 'Pupa.png';
 
 const spriteCache = {};
 
+function renderSpriteCanvas(img, color = null) {
+    if (!img || !img.complete || img.width === 0) return null;
+
+    const c = document.createElement('canvas');
+    c.width = img.width;
+    c.height = img.height;
+    const cx = c.getContext('2d');
+    cx.drawImage(img, 0, 0);
+
+    if (color) {
+        cx.globalCompositeOperation = 'source-in';
+        cx.fillStyle = color;
+        cx.fillRect(0, 0, c.width, c.height);
+        cx.globalCompositeOperation = 'source-over';
+    }
+
+    return c;
+}
+
 function getTintedSprite(type, color) {
-    // Map super_soldier to soldier image
     const imgType = type === 'super_soldier' ? 'soldier' : type;
     const key = `${color}_${imgType}`;
     if (spriteCache[key]) return spriteCache[key];
 
-    const img = images[imgType];
-    if (!img || !img.complete || img.width === 0) return null;
-
-    const c = document.createElement('canvas');
-    c.width = img.width; c.height = img.height;
-    const cx = c.getContext('2d');
-    cx.drawImage(img, 0, 0);
-
-    const imgData = cx.getImageData(0, 0, c.width, c.height);
-    const data = imgData.data;
-    for (let i = 0; i < data.length; i += 4) {
-        if (data[i] > 230 && data[i+1] > 230 && data[i+2] > 230) data[i+3] = 0; 
-    }
-    cx.putImageData(imgData, 0, 0);
-
-    cx.globalCompositeOperation = 'source-atop';
-    cx.fillStyle = color;
-    cx.globalAlpha = 0.5; 
-    cx.fillRect(0, 0, c.width, c.height);
-    cx.globalAlpha = 1.0;
-    cx.globalCompositeOperation = 'source-over';
-
-    spriteCache[key] = c;
-    return c;
+    const sprite = renderSpriteCanvas(images[imgType], color);
+    if (sprite) spriteCache[key] = sprite;
+    return sprite;
 }
 
 function getClearSprite(type) {
-    // Map super_soldier to soldier image
     const imgType = type === 'super_soldier' ? 'soldier' : type;
     if (spriteCache[imgType]) return spriteCache[imgType];
-    const img = images[imgType];
-    if (!img || !img.complete || img.width === 0) return null;
-    const c = document.createElement('canvas');
-    c.width = img.width; c.height = img.height;
-    const cx = c.getContext('2d');
-    cx.drawImage(img, 0, 0);
-    const imgData = cx.getImageData(0, 0, c.width, c.height);
-    const data = imgData.data;
-    for (let i = 0; i < data.length; i += 4) {
-        if (data[i] > 230 && data[i+1] > 230 && data[i+2] > 230) data[i+3] = 0; 
-    }
-    cx.putImageData(imgData, 0, 0);
-    spriteCache[imgType] = c;
-    return c;
+
+    const sprite = renderSpriteCanvas(images[imgType]);
+    if (sprite) spriteCache[imgType] = sprite;
+    return sprite;
 }
+
+function prewarmSprites() {
+    ['queen', 'worker', 'soldier', 'beetle', 'aphid', 'rock', 'hill', 'egg', 'larva', 'pupa'].forEach(type => {
+        getClearSprite(type);
+    });
+    ['#3498db', '#9b59b6', '#e67e22', '#1abc9c', '#f1c40f', '#e84393'].forEach(color => {
+        getTintedSprite('queen', color);
+        getTintedSprite('worker', color);
+        getTintedSprite('soldier', color);
+    });
+}
+
+window.addEventListener('load', prewarmSprites);
 
 class Particle {
     constructor(x, y, color) {
@@ -227,10 +340,13 @@ function showHibernationResult(frozenCount = null) {
 
 // Fixed Input Listeners & Command Wheel logic
 window.addEventListener('keydown', e => {
-    if (e.key === ' ') e.preventDefault(); 
+    if (e.key === ' ') e.preventDefault();
     const key = e.key === ' ' ? 'space' : e.key.toLowerCase();
-    if (keys.hasOwnProperty(key)) keys[key] = true;
-    
+    if (keyboardKeys.hasOwnProperty(key)) {
+        keyboardKeys[key] = true;
+        syncKeys();
+    }
+
     // Command Wheel Opening
     if (key === 'c') {
         if (commandWheel.style.display === 'none' && guardMenu.style.display === 'none') {
@@ -240,8 +356,11 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => {
     const key = e.key === ' ' ? 'space' : e.key.toLowerCase();
-    if (keys.hasOwnProperty(key)) keys[key] = false;
-    
+    if (keyboardKeys.hasOwnProperty(key)) {
+        keyboardKeys[key] = false;
+        syncKeys();
+    }
+
     // Command Wheel Closing
     if (key === 'c') closeCommandMenus();
 });
@@ -249,6 +368,121 @@ window.addEventListener('keyup', e => {
 window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
 window.addEventListener('mousedown', e => { if (e.button === 0) mouse.clicking = true; });
 window.addEventListener('mouseup', e => { if (e.button === 0) mouse.clicking = false; });
+
+if (joystick) {
+    joystick.addEventListener('pointerdown', e => {
+        if (!isTouchDevice) return;
+        clearTouchMoveTarget();
+        joystickState.active = true;
+        joystickState.pointerId = e.pointerId;
+        const rect = joystick.getBoundingClientRect();
+        joystickState.baseX = rect.left + rect.width / 2;
+        joystickState.baseY = rect.top + rect.height / 2;
+        joystick.setPointerCapture(e.pointerId);
+        updateJoystickVector(e.clientX, e.clientY);
+        e.preventDefault();
+    });
+
+    joystick.addEventListener('pointermove', e => {
+        if (!joystickState.active || e.pointerId !== joystickState.pointerId) return;
+        updateJoystickVector(e.clientX, e.clientY);
+        e.preventDefault();
+    });
+
+    const endJoystick = e => {
+        if (!joystickState.active || e.pointerId !== joystickState.pointerId) return;
+        resetJoystick();
+        e.preventDefault();
+    };
+
+    joystick.addEventListener('pointerup', endJoystick);
+    joystick.addEventListener('pointercancel', endJoystick);
+    joystick.addEventListener('lostpointercapture', resetJoystick);
+}
+
+let canvasTouchStart = null;
+let lastCanvasTap = null;
+canvas.addEventListener('pointerdown', e => {
+    if (!isTouchDevice || e.pointerType !== 'touch') return;
+    const target = e.target;
+    if (target.closest && target.closest('#mobile-controls')) return;
+
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+    canvasTouchStart = { id: e.pointerId, x: e.clientX, y: e.clientY, time: performance.now() };
+    canvas.setPointerCapture(e.pointerId);
+    e.preventDefault();
+});
+
+canvas.addEventListener('pointermove', e => {
+    if (e.pointerType !== 'touch') return;
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+    e.preventDefault();
+});
+
+canvas.addEventListener('pointerup', e => {
+    if (e.pointerType !== 'touch') return;
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+    mouse.clicking = false;
+
+    if (canvasTouchStart && canvasTouchStart.id === e.pointerId) {
+        const movement = Math.hypot(e.clientX - canvasTouchStart.x, e.clientY - canvasTouchStart.y);
+        const duration = performance.now() - canvasTouchStart.time;
+        if (movement < 18 && duration < 400) {
+            const now = performance.now();
+            const isDoubleTap = lastCanvasTap && (now - lastCanvasTap.time) < 320 && Math.hypot(e.clientX - lastCanvasTap.x, e.clientY - lastCanvasTap.y) < 30;
+            if (isDoubleTap) {
+                socket.emit('double_click', { x: mouse.worldX, y: mouse.worldY });
+                lastCanvasTap = null;
+                clearTouchMoveTarget();
+            } else {
+                setTouchMoveTarget(e.clientX, e.clientY);
+                lastCanvasTap = { x: e.clientX, y: e.clientY, time: now };
+            }
+        }
+    }
+
+    canvasTouchStart = null;
+    e.preventDefault();
+});
+
+canvas.addEventListener('pointercancel', e => {
+    if (canvasTouchStart && canvasTouchStart.id === e.pointerId) canvasTouchStart = null;
+    mouse.clicking = false;
+    e.preventDefault();
+});
+
+if (attackButton) {
+    const pressAttack = e => {
+        if (!isTouchDevice) return;
+        mouse.clicking = true;
+        touchKeys.space = true;
+        syncKeys();
+        e.preventDefault();
+    };
+    const releaseAttack = e => {
+        mouse.clicking = false;
+        touchKeys.space = false;
+        syncKeys();
+        e.preventDefault();
+    };
+    attackButton.addEventListener('pointerdown', pressAttack);
+    attackButton.addEventListener('pointerup', releaseAttack);
+    attackButton.addEventListener('pointercancel', releaseAttack);
+    attackButton.addEventListener('pointerleave', releaseAttack);
+}
+
+if (commandButton) {
+    commandButton.addEventListener('pointerdown', e => {
+        if (!isTouchDevice) return;
+        mouse.x = window.innerWidth * 0.5;
+        mouse.y = window.innerHeight * 0.5;
+        openCommandWheel();
+        e.preventDefault();
+    });
+}
 
 canvas.addEventListener('dblclick', (e) => {
     // Send double-click drop to server with world coords
@@ -436,6 +670,7 @@ function update(deltaTime) {
         const myAnt = gameState.ants[me.antId];
         targetCamX = myAnt.x - canvas.width / 2;
         targetCamY = myAnt.y - canvas.height / 2;
+        updateTouchMovementTarget(myAnt);
         socket.emit('input', { keys, mouseX: mouse.worldX, mouseY: mouse.worldY, clicking: mouse.clicking });
     }
 

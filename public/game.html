@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Colony Clash</title>
     <style>
-        body, html { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; background-color: #043a05; font-family: Arial, sans-serif; }
-        canvas { display: block; width: 100%; height: 100%; }
+        body, html { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; background-color: #043a05; font-family: Arial, sans-serif; touch-action: none; }
+        canvas { display: block; width: 100%; height: 100%; touch-action: none; }
         
         #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; background: rgba(0, 0, 0, 0.5); padding: 15px; border-radius: 8px; color: white; z-index: 10; }
         #ui h1 { margin: 0 0 10px 0; font-size: 24px; }
@@ -140,6 +140,86 @@
             transition: background 0.2s, transform 0.2s;
         }
         .guard-btn:hover { background: #f1c40f; color: black; }
+
+        #mobile-controls {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 120;
+            display: none;
+        }
+
+        .mobile-joystick {
+            position: absolute;
+            left: 20px;
+            bottom: 22px;
+            width: 132px;
+            height: 132px;
+            border-radius: 50%;
+            background: rgba(0, 0, 0, 0.20);
+            border: 1px solid rgba(255,255,255,0.15);
+            pointer-events: auto;
+            touch-action: none;
+            backdrop-filter: blur(8px);
+        }
+
+        .mobile-joystick::before {
+            content: '';
+            position: absolute;
+            inset: 14px;
+            border-radius: 50%;
+            border: 1px solid rgba(255,255,255,0.10);
+        }
+
+        .mobile-joystick-knob {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 54px;
+            height: 54px;
+            margin-left: -27px;
+            margin-top: -27px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 35% 35%, rgba(245,200,66,0.95), rgba(200,134,10,0.92));
+            box-shadow: 0 0 22px rgba(200,134,10,0.38);
+            pointer-events: none;
+            transform: translate(0, 0);
+        }
+
+        .mobile-actions {
+            position: absolute;
+            right: 16px;
+            bottom: 22px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            pointer-events: auto;
+        }
+
+        .mobile-action-btn {
+            width: 116px;
+            height: 58px;
+            border: 0;
+            border-radius: 16px;
+            background: linear-gradient(180deg, rgba(231,76,60,0.96), rgba(170,42,28,0.96));
+            color: #fff;
+            font-size: 16px;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            box-shadow: 0 10px 24px rgba(0,0,0,0.28);
+            touch-action: none;
+        }
+
+        .mobile-action-btn.secondary {
+            background: linear-gradient(180deg, rgba(245,200,66,0.96), rgba(200,134,10,0.96));
+            color: #1a0f06;
+        }
+
+        @media (pointer: coarse) {
+            #mobile-controls { display: block; }
+            #ui p:nth-of-type(1), #ui p:nth-of-type(2) { display: none; }
+        }
     </style>
 </head>
 <body>
@@ -195,6 +275,16 @@
         <button class="guard-btn" data-cmd="guard_area">Guard Area</button>
         <button class="guard-btn" data-cmd="guard_home">Guard Home</button>
         <button class="guard-btn" data-cmd="back">Back</button>
+    </div>
+
+    <div id="mobile-controls" aria-hidden="true">
+        <div id="mobile-joystick" class="mobile-joystick">
+            <div id="mobile-joystick-knob" class="mobile-joystick-knob"></div>
+        </div>
+        <div class="mobile-actions">
+            <button id="mobile-commands" class="mobile-action-btn secondary" type="button">Commands</button>
+            <button id="mobile-attack" class="mobile-action-btn" type="button">Attack</button>
+        </div>
     </div>
 
     <canvas id="gameCanvas"></canvas>

@@ -26,14 +26,14 @@ ColonyClash is a real-time multiplayer ant colony simulation game where players 
 ### Languages
 
 -   JavaScript
--   TypeScript
+- HTML5
+- CSS
 
 ### Tools & Frameworks
 
 -   Node.js
 -   Socket.IO
 -   HTML5 Canvas
--   GitHub Actions (for CI/CD)
 
 ---
 

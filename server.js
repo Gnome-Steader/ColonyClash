@@ -4,6 +4,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -13,23 +14,39 @@ const io = new Server(server, {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.post('/hibernate', (req, res) => {
-    executeHibernation();
-    res.json({ success: true, message: 'Hibernation triggered.' });
-});
+// --- Move these constants up so they are available to createGrid ---
+const MAP_SIZE = 3000;
+const CELL_SIZE = 400;
+const GRID_W = Math.ceil(MAP_SIZE / CELL_SIZE) + 1;
+// ---
 
-const state = { players: {}, colonies: {}, ants: {}, queens: {}, beetles: {}, foods: {}, meats: {}, broods: {}, aphids: {}, rocks: {} };
-const connectedSockets = new Set();
+function createEmptyState() {
+    return { players: {}, colonies: {}, ants: {}, queens: {}, beetles: {}, foods: {}, meats: {}, broods: {}, aphids: {}, rocks: {} };
+}
+
+function createGrid() {
+    const nextGrid = new Array(GRID_W * GRID_W);
+    for (let i = 0; i < nextGrid.length; i++) {
+        nextGrid[i] = { ants: [], foods: [], meats: [], broods: [], beetles: [], queens: [], aphids: [] };
+    }
+    return nextGrid;
+}
+
+const rooms = new Map();
+let currentRoomId = 'default';
+let state = createEmptyState();
+let connectedSockets = new Set();
 
 let idCounter = 1;
 const getId = () => (idCounter++).toString();
 
-const MAP_SIZE = 3000;
 const FPS = 25;
 const MAX_ANTS_PER_COLONY = 800; // Hard cap so we don't accidentally lag out the engine forever
 let hasGameStarted = false;
 let simTick = 0;
 let stateUpdateFrame = 0; // Frame counter for skipping updates when colonies are large
+
+let grid = createGrid();
 
 // Hibernation cycle
 let hibernationWarningTime = null;
@@ -48,6 +65,107 @@ const ROCK_COLLISION_PADDING = 0;
 
 const COLORS = ['#3498db', '#9b59b6', '#e67e22', '#1abc9c', '#f1c40f', '#e84393'];
 const FALLBACK_COLOR = '#808080';
+
+function normalizeRoomId(roomId) {
+    const raw = typeof roomId === 'string' ? roomId.trim() : '';
+    const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '');
+    return cleaned || 'default';
+}
+
+function createRoom(roomId) {
+    return {
+        id: normalizeRoomId(roomId),
+        state: createEmptyState(),
+        grid: createGrid(),
+        connectedSockets: new Set(),
+        idCounter: 1,
+        hasGameStarted: false,
+        simTick: 0,
+        stateUpdateFrame: 0,
+        hibernationWarningTime: null,
+        hibernationStartTime: null,
+        nextHibernationCycleStart: null
+    };
+}
+
+function getRoom(roomId) {
+    const normalized = normalizeRoomId(roomId);
+    if (!rooms.has(normalized)) {
+        const room = createRoom(normalized);
+        rooms.set(normalized, room);
+        useRoom(room, () => {
+            spawnRocks();
+            updateGameInfo();
+            emitLobbyState();
+        });
+    }
+    return rooms.get(normalized);
+}
+
+function useRoom(room, fn) {
+    const previous = {
+        currentRoomId,
+        state,
+        connectedSockets,
+        idCounter,
+        hasGameStarted,
+        simTick,
+        stateUpdateFrame,
+        hibernationWarningTime,
+        hibernationStartTime,
+        nextHibernationCycleStart,
+        grid
+    };
+
+    currentRoomId = room.id;
+    state = room.state;
+    connectedSockets = room.connectedSockets;
+    idCounter = room.idCounter;
+    hasGameStarted = room.hasGameStarted;
+    simTick = room.simTick;
+    stateUpdateFrame = room.stateUpdateFrame;
+    hibernationWarningTime = room.hibernationWarningTime;
+    hibernationStartTime = room.hibernationStartTime;
+    nextHibernationCycleStart = room.nextHibernationCycleStart;
+    grid = room.grid;
+
+    try {
+        return fn();
+    } finally {
+        room.state = state;
+        room.connectedSockets = connectedSockets;
+        room.idCounter = idCounter;
+        room.hasGameStarted = hasGameStarted;
+        room.simTick = simTick;
+        room.stateUpdateFrame = stateUpdateFrame;
+        room.hibernationWarningTime = hibernationWarningTime;
+        room.hibernationStartTime = hibernationStartTime;
+        room.nextHibernationCycleStart = nextHibernationCycleStart;
+        room.grid = grid;
+
+        currentRoomId = previous.currentRoomId;
+        state = previous.state;
+        connectedSockets = previous.connectedSockets;
+        idCounter = previous.idCounter;
+        hasGameStarted = previous.hasGameStarted;
+        simTick = previous.simTick;
+        stateUpdateFrame = previous.stateUpdateFrame;
+        hibernationWarningTime = previous.hibernationWarningTime;
+        hibernationStartTime = previous.hibernationStartTime;
+        nextHibernationCycleStart = previous.nextHibernationCycleStart;
+        grid = previous.grid;
+    }
+}
+
+function roomEmit(eventName, payload) {
+    io.to(currentRoomId).emit(eventName, payload);
+}
+
+function withSocketRoom(socket, fn) {
+    const room = getRoom(socket.data.roomId || socket.handshake.query.room);
+    socket.data.roomId = room.id;
+    return useRoom(room, fn);
+}
 
 function getTakenColors() {
     return new Set(Object.values(state.colonies).map(colony => colony.color));
@@ -73,14 +191,6 @@ const clamp = (val, min, max) => Math.max(min, Math.min(max, val));
 
 // Spatial Hash Grid
 
-const CELL_SIZE = 400;
-const GRID_W = Math.ceil(MAP_SIZE / CELL_SIZE) + 1;
-
-// Pre-allocate grid to completely eliminate GC for cell creation/destruction
-const grid = new Array(GRID_W * GRID_W);
-for (let i = 0; i < grid.length; i++) {
-    grid[i] = { ants: [], foods: [], meats: [], broods: [], beetles: [], queens: [], aphids: [] };
-}
 
 function getCellIndex(x, y) {
     const cx = Math.max(0, Math.min(GRID_W - 1, Math.floor(x / CELL_SIZE)));
@@ -197,8 +307,6 @@ function spawnRocks() {
         }
     }
 }
-
-spawnRocks();
 
 function buildGrid() {
     for (let i = 0; i < grid.length; i++) {
@@ -713,12 +821,12 @@ function createColony(playerId, preferredColor = null) {
 
 function updateGameInfo() {
     const playersCount = connectedSockets.size;
-    if (hasGameStarted) io.emit('gameInfo', `Battle in progress! Queens remaining: ${Object.keys(state.queens).length}`);
-    else io.emit('gameInfo', `Waiting for opponents... (${playersCount}/2)`);
+    if (hasGameStarted) roomEmit('gameInfo', `Battle in progress! Queens remaining: ${Object.keys(state.queens).length}`);
+    else roomEmit('gameInfo', `Waiting for opponents... (${playersCount}/2)`);
 }
 
 function emitLobbyState() {
-    io.emit('lobbyState', {
+    roomEmit('lobbyState', {
         takenColors: Object.values(state.colonies).map(colony => colony.color)
     });
 }
@@ -799,114 +907,131 @@ function checkWinCondition() {
 }
 
 io.on('connection', socket => {
-    connectedSockets.add(socket.id);
-    socket.emit('init', socket.id);
-    io.emit('playerCount', connectedSockets.size);
-    emitLobbyState();
-    updateGameInfo();
+    const roomId = normalizeRoomId(socket.handshake.query.room);
+    const room = getRoom(roomId);
+    socket.data.roomId = room.id;
+    socket.join(room.id);
 
-    socket.on('joinGame', data => {
-        if (state.players[socket.id]) return;
-
-        const preferredColor = data && typeof data.color === 'string' ? data.color : null;
-        const { colId, firstWorkerId } = createColony(socket.id, preferredColor);
-        state.players[socket.id] = {
-            id: socket.id,
-            name: data && typeof data.name === 'string' ? data.name : 'Colony',
-            colonyId: colId,
-            antId: firstWorkerId,
-            inputs: { keys: {}, mouseX: 0, mouseY: 0, clicking: false }
-        };
-        socket.data.joinedGame = true;
-        socket.data.colonyId = colId;
-
-        if (Object.keys(state.players).length >= 2) {
-            hasGameStarted = true;
-            startHibernationCycle();
-        }
-
-        io.emit('playerCount', connectedSockets.size);
+    useRoom(room, () => {
+        connectedSockets.add(socket.id);
+        socket.emit('init', socket.id);
+        roomEmit('playerCount', connectedSockets.size);
         emitLobbyState();
         updateGameInfo();
     });
 
-    socket.on('input', data => { if (state.players[socket.id]) state.players[socket.id].inputs = data; });
-    socket.on('double_click', data => {
-        const p = state.players[socket.id];
-        if (!p) return;
-        const ant = state.ants[p.antId];
-        if (!ant) return;
-        if (!ant.carrying) return;
-        // Drop in front of ant, not at cursor
-        const dropDist = 30;
-        const x = ant.x + Math.cos(ant.angle) * dropDist;
-        const y = ant.y + Math.sin(ant.angle) * dropDist;
+    socket.on('joinGame', data => {
+        withSocketRoom(socket, () => {
+            if (state.players[socket.id]) return;
 
-        if (ant.carrying === 'food' || ant.carrying === 'honey') {
-            const id = getId();
-            const pos = getClearPositionNear(clamp(x, 0, MAP_SIZE), clamp(y, 0, MAP_SIZE), 20, ROCK_SPAWN_CLEARANCE);
-            state.foods[id] = { id, x: pos.x, y: pos.y, foodType: ant.carrying === 'honey' ? 'honey' : 'normal' };
-        } else if (ant.carrying === 'meat') {
-            const id = getId();
-            const pos = getClearPositionNear(clamp(x, 0, MAP_SIZE), clamp(y, 0, MAP_SIZE), 20, ROCK_SPAWN_CLEARANCE);
-            state.meats[id] = { id, x: pos.x, y: pos.y };
-        } else if (ant.carrying === 'aphid') {
-            // Re-place the carried aphid where dropped (in front of ant)
-            if (ant.carriedAphid) {
-                const aid = ant.carriedAphid.id;
-                const pos = getFreeAphidPosition(clamp(x, 0, MAP_SIZE), clamp(y, 0, MAP_SIZE));
-                state.aphids[aid] = ant.carriedAphid;
-                state.aphids[aid].x = pos.x;
-                state.aphids[aid].y = pos.y;
-                state.aphids[aid].honeyTimer = state.aphids[aid].honeyTimer || 0;
-                state.aphids[aid].lastFedTick = state.aphids[aid].lastFedTick || simTick;
-                state.aphids[aid].reproduceTimer = state.aphids[aid].reproduceTimer || Math.floor((30 + Math.random() * 30) * FPS);
-                state.aphids[aid].lastDroppedTick = simTick; // Add cooldown after drop
-                delete ant.carriedAphid;
-            } else {
-                const id = getId();
-                const pos = getFreeAphidPosition(clamp(x, 0, MAP_SIZE), clamp(y, 0, MAP_SIZE));
-                state.aphids[id] = { id, x: pos.x, y: pos.y, honeyTimer: 0, lastFedTick: simTick, reproduceTimer: Math.floor((30 + Math.random() * 30) * FPS), lastDroppedTick: simTick };
+            const preferredColor = data && typeof data.color === 'string' ? data.color : null;
+            const { colId, firstWorkerId } = createColony(socket.id, preferredColor);
+            state.players[socket.id] = {
+                id: socket.id,
+                name: data && typeof data.name === 'string' ? data.name : 'Colony',
+                colonyId: colId,
+                antId: firstWorkerId,
+                inputs: { keys: {}, mouseX: 0, mouseY: 0, clicking: false }
+            };
+            socket.data.joinedGame = true;
+            socket.data.colonyId = colId;
+
+            if (Object.keys(state.players).length >= 2) {
+                hasGameStarted = true;
+                startHibernationCycle();
             }
-        }
-        ant.carrying = null;
+
+            roomEmit('playerCount', connectedSockets.size);
+            emitLobbyState();
+            updateGameInfo();
+        });
     });
-    socket.on('command', cmd => {
-        const p = state.players[socket.id];
-        if (p && state.colonies[p.colonyId]) {
-            const colony = state.colonies[p.colonyId];
-            colony.command = cmd;
 
-            if (cmd === 'guard_area' && state.ants[p.antId]) {
-                colony.guardX = state.ants[p.antId].x;
-                colony.guardY = state.ants[p.antId].y;
-            }
+    socket.on('input', data => {
+        withSocketRoom(socket, () => { if (state.players[socket.id]) state.players[socket.id].inputs = data; });
+    });
+    socket.on('double_click', data => {
+        withSocketRoom(socket, () => {
+            const p = state.players[socket.id];
+            if (!p) return;
+            const ant = state.ants[p.antId];
+            if (!ant) return;
+            if (!ant.carrying) return;
+            // Drop in front of ant, not at cursor
+            const dropDist = 30;
+            const x = ant.x + Math.cos(ant.angle) * dropDist;
+            const y = ant.y + Math.sin(ant.angle) * dropDist;
 
-            if (cmd === 'guard_home') {
-                const queen = Object.values(state.queens).find(q => q.colonyId === p.colonyId);
-                if (queen) {
-                    colony.guardX = queen.x;
-                    colony.guardY = queen.y;
+            if (ant.carrying === 'food' || ant.carrying === 'honey') {
+                const id = getId();
+                const pos = getClearPositionNear(clamp(x, 0, MAP_SIZE), clamp(y, 0, MAP_SIZE), 20, ROCK_SPAWN_CLEARANCE);
+                state.foods[id] = { id, x: pos.x, y: pos.y, foodType: ant.carrying === 'honey' ? 'honey' : 'normal' };
+            } else if (ant.carrying === 'meat') {
+                const id = getId();
+                const pos = getClearPositionNear(clamp(x, 0, MAP_SIZE), clamp(y, 0, MAP_SIZE), 20, ROCK_SPAWN_CLEARANCE);
+                state.meats[id] = { id, x: pos.x, y: pos.y };
+            } else if (ant.carrying === 'aphid') {
+                // Re-place the carried aphid where dropped (in front of ant)
+                if (ant.carriedAphid) {
+                    const aid = ant.carriedAphid.id;
+                    const pos = getFreeAphidPosition(clamp(x, 0, MAP_SIZE), clamp(y, 0, MAP_SIZE));
+                    state.aphids[aid] = ant.carriedAphid;
+                    state.aphids[aid].x = pos.x;
+                    state.aphids[aid].y = pos.y;
+                    state.aphids[aid].honeyTimer = state.aphids[aid].honeyTimer || 0;
+                    state.aphids[aid].lastFedTick = state.aphids[aid].lastFedTick || simTick;
+                    state.aphids[aid].reproduceTimer = state.aphids[aid].reproduceTimer || Math.floor((30 + Math.random() * 30) * FPS);
+                    state.aphids[aid].lastDroppedTick = simTick; // Add cooldown after drop
+                    delete ant.carriedAphid;
+                } else {
+                    const id = getId();
+                    const pos = getFreeAphidPosition(clamp(x, 0, MAP_SIZE), clamp(y, 0, MAP_SIZE));
+                    state.aphids[id] = { id, x: pos.x, y: pos.y, honeyTimer: 0, lastFedTick: simTick, reproduceTimer: Math.floor((30 + Math.random() * 30) * FPS), lastDroppedTick: simTick };
                 }
             }
-        }
+            ant.carrying = null;
+        });
+    });
+    socket.on('command', cmd => {
+        withSocketRoom(socket, () => {
+            const p = state.players[socket.id];
+            if (p && state.colonies[p.colonyId]) {
+                const colony = state.colonies[p.colonyId];
+                colony.command = cmd;
+
+                if (cmd === 'guard_area' && state.ants[p.antId]) {
+                    colony.guardX = state.ants[p.antId].x;
+                    colony.guardY = state.ants[p.antId].y;
+                }
+
+                if (cmd === 'guard_home') {
+                    const queen = Object.values(state.queens).find(q => q.colonyId === p.colonyId);
+                    if (queen) {
+                        colony.guardX = queen.x;
+                        colony.guardY = queen.y;
+                    }
+                }
+            }
+        });
     });
 
     socket.on('disconnect', () => {
-        connectedSockets.delete(socket.id);
-        const p = state.players[socket.id];
-        if (p) {
-            for (let aId in state.ants)   { if (state.ants[aId].colonyId   === p.colonyId) delete state.ants[aId]; }
-            for (let qId in state.queens)  { if (state.queens[qId].colonyId  === p.colonyId) delete state.queens[qId]; }
-            for (let bId in state.broods)  { if (state.broods[bId].colonyId  === p.colonyId) delete state.broods[bId]; }
-            delete state.colonies[p.colonyId];
-            delete state.players[socket.id];
-            checkWinCondition();
-        }
+        withSocketRoom(socket, () => {
+            connectedSockets.delete(socket.id);
+            const p = state.players[socket.id];
+            if (p) {
+                for (let aId in state.ants)   { if (state.ants[aId].colonyId   === p.colonyId) delete state.ants[aId]; }
+                for (let qId in state.queens)  { if (state.queens[qId].colonyId  === p.colonyId) delete state.queens[qId]; }
+                for (let bId in state.broods)  { if (state.broods[bId].colonyId  === p.colonyId) delete state.broods[bId]; }
+                delete state.colonies[p.colonyId];
+                delete state.players[socket.id];
+                checkWinCondition();
+            }
 
-        io.emit('playerCount', connectedSockets.size);
-        emitLobbyState();
-        updateGameInfo();
+            roomEmit('playerCount', connectedSockets.size);
+            emitLobbyState();
+            updateGameInfo();
+        });
     });
 });
 
@@ -1453,6 +1578,9 @@ class CentralizedAIUpdateSystem {
 const centralAIUpdateSystem = new CentralizedAIUpdateSystem();
 
 setInterval(() => {
+    for (const room of rooms.values()) {
+        if (room.connectedSockets.size === 0) continue;
+        useRoom(room, () => {
     simTick++;
     
     // ─── HIBERNATION CYCLE ───
@@ -1463,7 +1591,7 @@ setInterval(() => {
         
         // 30 seconds before hibernation: send warning
         if (hibernationWarningTime !== null && simTick === hibernationWarningTime) {
-            io.emit('hibernationWarning', {
+            roomEmit('hibernationWarning', {
                 timeUntilHibernation: 30
             });
         }
@@ -1756,6 +1884,8 @@ setInterval(() => {
 
                 io.to(p.id).emit('state', localState);
             }
+    }
+        });
     }
 }, 1000 / FPS);
 
