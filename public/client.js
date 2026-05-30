@@ -13,6 +13,8 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const statusText = document.getElementById('status');
 const gameInfoText = document.getElementById('game-info');
+const gameInfoBanner = document.getElementById('lobby-banner');
+const hideGameInfoButton = document.getElementById('hide-game-info');
 const commandWheel = document.getElementById('command-wheel');
 const guardMenu = document.getElementById('guard-menu');
 const mobileControls = document.getElementById('mobile-controls');
@@ -287,7 +289,13 @@ function spawnJuice(x, y, text, isPlayer, count = 5) {
 
 function hideHibernationWarning() {
     const warningDiv = document.getElementById('hibernation-warning');
-    if (warningDiv) warningDiv.classList.remove('visible');
+    if (!warningDiv) return;
+    warningDiv.classList.remove('visible');
+    warningDiv.style.display = 'none';
+    if (hibernationWarningTimer) {
+        clearTimeout(hibernationWarningTimer);
+        hibernationWarningTimer = null;
+    }
 }
 
 function hideHibernationResult() {
@@ -481,6 +489,12 @@ if (commandButton) {
         mouse.y = window.innerHeight * 0.5;
         openCommandWheel();
         e.preventDefault();
+    });
+}
+
+if (hideGameInfoButton && gameInfoBanner) {
+    hideGameInfoButton.addEventListener('click', () => {
+        gameInfoBanner.style.display = 'none';
     });
 }
 

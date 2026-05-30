@@ -12,7 +12,46 @@
         #ui h1 { margin: 0 0 10px 0; font-size: 24px; }
         #ui p { margin: 5px 0; font-size: 14px; }
 
-        #lobby-banner { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); padding: 10px 30px; border-radius: 10px; border: 2px solid #f1c40f; text-align: center; pointer-events: none; z-index: 50; }
+        #lobby-banner {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.8);
+            padding: 10px 14px 10px 18px;
+            border-radius: 10px;
+            border: 2px solid #f1c40f;
+            text-align: center;
+            pointer-events: auto;
+            z-index: 50;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        #lobby-banner .banner-copy {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        #lobby-banner button {
+            border: 0;
+            border-radius: 999px;
+            padding: 8px 12px;
+            background: rgba(255,255,255,0.12);
+            color: #fff;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            cursor: pointer;
+            transition: background 0.2s ease, transform 0.2s ease;
+        }
+
+        #lobby-banner button:hover {
+            background: rgba(255,255,255,0.2);
+            transform: translateY(-1px);
+        }
         
         /* Underground indicator */
         #underground-indicator {
@@ -38,41 +77,42 @@
         #hibernation-warning {
             display: none;
             position: absolute;
-            top: 50%;
+            top: 10px;
             left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(10, 5, 2, 0.95);
-            border: 3px solid #e74c3c;
-            border-radius: 12px;
-            padding: 24px 40px;
+            transform: translateX(-50%);
+            background: rgba(10, 5, 2, 0.92);
+            border: 2px solid #e74c3c;
+            border-radius: 10px;
+            padding: 14px 22px;
             color: white;
             text-align: center;
             z-index: 200;
             pointer-events: none;
-            box-shadow: 0 0 40px rgba(231,76,60,0.5);
-            min-width: 340px;
+            box-shadow: 0 0 24px rgba(231,76,60,0.35);
+            min-width: 260px;
+            max-width: 86vw;
         }
 
         #hibernation-warning h2 {
             color: #e74c3c;
-            font-size: 22px;
-            margin: 0 0 10px 0;
-            letter-spacing: 0.1em;
+            font-size: 18px;
+            margin: 0 0 8px 0;
+            letter-spacing: 0.08em;
             text-transform: uppercase;
         }
 
         #hibernation-countdown {
-            font-size: 52px;
+            font-size: 38px;
             font-weight: bold;
             color: #f1c40f;
             line-height: 1;
-            margin: 8px 0;
+            margin: 6px 0;
         }
 
         #hibernation-sub {
-            font-size: 14px;
-            color: #aaa;
-            margin: 4px 0 0;
+            font-size: 13px;
+            color: #ccc;
+            margin: 2px 0 0;
         }
 
         /* Hibernation result */
@@ -233,8 +273,11 @@
 
     <!-- Centered Lobby Banner -->
     <div id="lobby-banner">
-        <h2 id="game-info" style="margin: 0; color: #f1c40f; font-size: 24px;">Waiting for opponents... (1/2)</h2>
-        <p style="margin: 5px 0 0 0; font-size: 14px; color: white;">Tip: Walk over the glowing exit to leave your burrow!</p>
+        <div class="banner-copy">
+            <h2 id="game-info" style="margin: 0; color: #f1c40f; font-size: 24px;">Waiting for opponents... (1/2)</h2>
+            <p style="margin: 5px 0 0 0; font-size: 14px; color: white;">Tip: Walk over the glowing exit to leave your burrow!</p>
+        </div>
+        <button id="hide-game-info" type="button" aria-label="Hide game information banner">Hide</button>
     </div>
 
     <!-- Underground indicator -->
